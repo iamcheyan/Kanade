@@ -124,41 +124,40 @@ class OfflineLibraryFragment : BaseFragment() {
     override fun onResume() {
         super.onResume()
         activity?.findViewById<View>(R.id.toolbar_layout)?.visibility = View.GONE
-        setHomeChromeHidden(false)
     }
 
-
     private fun setupInsets() {
+        var topHeaderPadding = (72 * resources.displayMetrics.density).toInt()
+        var bottomNavPadding = (96 * resources.displayMetrics.density).toInt()
+
+        fun applyListPadding() {
+            binding.offlineList.setPadding(
+                binding.offlineList.paddingLeft,
+                topHeaderPadding,
+                binding.offlineList.paddingRight,
+                bottomNavPadding
+            )
+        }
+
         ViewCompat.setOnApplyWindowInsetsListener(binding.headerContainer) { view, insets ->
             val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val baseTop = (6 * resources.displayMetrics.density).toInt()
             view.setPadding(view.paddingLeft, top + baseTop, view.paddingRight, view.paddingBottom)
             insets
         }
-        binding.offlineList.setPadding(
-            binding.offlineList.paddingLeft,
-            (4 * resources.displayMetrics.density).toInt(),
-            binding.offlineList.paddingRight,
-            binding.offlineList.paddingBottom
-        )
+
         binding.headerContainer.addOnLayoutChangeListener { header, _, _, _, _, _, _, _, _ ->
-            val top = header.height + (4 * resources.displayMetrics.density).toInt()
-            binding.offlineList.setPadding(
-                binding.offlineList.paddingLeft,
-                top,
-                binding.offlineList.paddingRight,
-                binding.offlineList.paddingBottom
-            )
+            if (header.height > 0) {
+                topHeaderPadding = header.height + (4 * resources.displayMetrics.density).toInt()
+                applyListPadding()
+            }
         }
-        ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { list, insets ->
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { _, insets ->
             val bottomInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             val baseBottom = (96 * resources.displayMetrics.density).toInt()
-            list.setPadding(
-                list.paddingLeft,
-                list.paddingTop,
-                list.paddingRight,
-                baseBottom + bottomInset
-            )
+            bottomNavPadding = baseBottom + bottomInset
+            applyListPadding()
             WindowInsetsCompat.CONSUMED
         }
     }
