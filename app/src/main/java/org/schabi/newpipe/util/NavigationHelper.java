@@ -350,11 +350,20 @@ public final class NavigationHelper {
                         R.animator.custom_fade_in, R.animator.custom_fade_out);
     }
 
+    /**
+     * Show the app's home screen.
+     *
+     * This build's home is the offline library: the device exists to play
+     * videos that are already downloaded, so the library is the landing
+     * screen and everything else is reached from the drawer.
+     */
     public static void gotoMainFragment(final FragmentManager fragmentManager) {
-        final boolean popped = fragmentManager.popBackStackImmediate(MAIN_FRAGMENT_TAG, 0);
-        if (!popped) {
-            openMainFragment(fragmentManager);
-        }
+        fragmentManager.popBackStackImmediate(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+        defaultTransaction(fragmentManager)
+                .replace(R.id.fragment_holder,
+                        new org.schabi.newpipe.local.offline.OfflineLibraryFragment())
+                .addToBackStack(MAIN_FRAGMENT_TAG)
+                .commit();
     }
 
     public static void openMainFragment(final FragmentManager fragmentManager) {

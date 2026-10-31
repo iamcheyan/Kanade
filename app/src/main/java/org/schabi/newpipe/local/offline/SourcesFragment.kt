@@ -43,6 +43,8 @@ class SourcesFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        (activity as? androidx.appcompat.app.AppCompatActivity)
+            ?.supportActionBar?.title = getString(R.string.sources_title)
         binding.sourcesPager.adapter = SourceAdapter(this)
         TabLayoutMediator(binding.sourcesTabs, binding.sourcesPager) { tab, position ->
             tab.text = Sources.label(SourceAdapter.SOURCES[position])

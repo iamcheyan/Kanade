@@ -61,14 +61,11 @@ configure<ApplicationExtension> {
         debug {
             isDebuggable = true
 
-            // suffix the app id and the app name with git branch name
-            if (normalizedWorkingBranch.isEmpty() || workingBranch in defaultBranches) {
-                applicationIdSuffix = ".debug"
-                resValue("string", "app_name", "NewPipe Debug")
-            } else {
-                applicationIdSuffix = ".debug.$normalizedWorkingBranch"
-                resValue("string", "app_name", "NewPipe $workingBranch")
-            }
+            // Fixed package name: this build is installed on a device as the
+            // only copy, so letting the git branch rename it would create a
+            // second app instead of replacing the first.
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "JM21")
         }
 
         release {

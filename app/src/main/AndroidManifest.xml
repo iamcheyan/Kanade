@@ -180,21 +180,6 @@
                 android:resource="@xml/nnf_provider_paths" />
         </provider>
 
-        <!--
-          Separate authority from ${applicationId}.provider: that one exposes
-          NewPipe's own download folders, while this one only shares files the
-          videod service downloaded.
-        -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.jm21provider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/jm21_provider_paths" />
-        </provider>
-
         <activity
             android:name=".RouterActivity"
             android:excludeFromRecents="true"

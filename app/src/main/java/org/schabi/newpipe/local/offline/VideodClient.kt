@@ -1,20 +1,19 @@
 package org.schabi.newpipe.local.offline
 
-import android.text.format.DateUtils
 import java.net.URL
 
 /**
  * One completed download, as returned by videod's library endpoint.
  *
- * [path] is an absolute path inside videod's private data directory, so
- * playing it requires the FileProvider declared in the manifest.
+ * The file path is deliberately not carried: videod runs as a different uid,
+ * so this app cannot read the file and plays through the service's HTTP
+ * stream instead.
  */
 data class OfflineVideo(
     val id: String,
     val title: String,
     val thumbnail: String,
     val duration: Int,
-    val path: String,
     val accountId: String
 )
 
@@ -95,12 +94,6 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
         return post("/api/watch_later/$videoId/watched?account_id=$account", "{}")
     }
 
-    /** Download state for one video, or null when nothing was queued. */
-    fun downloadState(account: String, videoId: String): String? {
-        val jobs = get("/api/downloads?account_id=$account&limit=500")
-        return stateForVideo(jobs, videoId)
-    }
-
     // ---------------------------------------------------------------- HTTP
 
     private fun get(path: String): String {
@@ -153,7 +146,6 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             title = stringField(obj, "title").ifEmpty { stringField(obj, "id") },
             thumbnail = stringField(obj, "thumbnail"),
             duration = intField(obj, "duration"),
-            path = stringField(obj, "path"),
             accountId = stringField(obj, "account_id")
         )
     }
@@ -167,19 +159,6 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             duration = intField(obj, "duration"),
             accountId = stringField(obj, "account_id")
         )
-    }
-
-    /** Return the state of the newest job for videoId, from a downloads array. */
-    internal fun stateForVideo(json: String, videoId: String): String? {
-        var state: String? = null
-        for (obj in objects(json)) {
-            if (stringField(obj, "video_id") != videoId) continue
-            // Rows are ordered by priority and creation, so the first match is
-            // the newest job for this video.
-            state = stringField(obj, "state")
-            break
-        }
-        return state
     }
 
     private fun objectEnd(json: String, start: Int): Int {
@@ -265,19 +244,4 @@ fun formatDuration(seconds: Int): String {
     val m = seconds / 60
     val s = seconds % 60
     return String.format("%d:%02d", m, s)
-}
-
-/** "3 天前" style relative time, or an empty string when unparseable. */
-fun formatRelative(rfc3339: String): String {
-    if (rfc3339.isEmpty()) return ""
-    return try {
-        val millis = java.time.Instant.parse(rfc3339).toEpochMilli()
-        DateUtils.getRelativeTimeSpanString(
-            millis,
-            System.currentTimeMillis(),
-            DateUtils.MINUTE_IN_MILLIS
-        ).toString()
-    } catch (e: Exception) {
-        ""
-    }
 }

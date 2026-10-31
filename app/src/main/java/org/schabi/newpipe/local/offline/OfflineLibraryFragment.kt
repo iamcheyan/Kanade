@@ -1,20 +1,17 @@
 package org.schabi.newpipe.local.offline
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
-import java.io.File
 import org.schabi.newpipe.BaseFragment
 import org.schabi.newpipe.R
 import org.schabi.newpipe.databinding.FragmentOfflineLibraryBinding
@@ -137,29 +134,6 @@ class OfflineLibraryFragment : BaseFragment() {
         disposables.add(
             io.reactivex.rxjava3.core.Single
                 .fromCallable { client.markWatched(video.accountId, video.id) }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { loadLibrary() },
-                    { error ->
-                        showStatus(
-                            getString(R.string.offline_library_mark_failed),
-                            error.message ?: error.javaClass.simpleName
-                        )
-                    }
-                )
-        )
-    }
-
-    /** Queue a download again after its file disappeared. */
-    private fun requeue(video: OfflineVideo) {
-        showStatus(
-            getString(R.string.offline_library_redownloading),
-            video.title
-        )
-        disposables.add(
-            io.reactivex.rxjava3.core.Single
-                .fromCallable { client.download(video.accountId, video.id) }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
