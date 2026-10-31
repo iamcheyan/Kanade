@@ -73,7 +73,7 @@ abstract class BasePlayerGestureListener(
         ) {
             restoreSpeedAfterLongPress()
         }
-        return false
+        return true
     }
 
     private fun onDoubleTap(

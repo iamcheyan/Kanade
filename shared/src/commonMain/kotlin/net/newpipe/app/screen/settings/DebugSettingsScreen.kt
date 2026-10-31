@@ -6,11 +6,10 @@
 package net.newpipe.app.screen.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -122,6 +121,7 @@ fun DebugSettingsScreenContent(
     val reportLabel = stringResource(Res.string.error_snackbar_action)
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = stringResource(Res.string.settings_category_debug_title),
@@ -133,10 +133,8 @@ fun DebugSettingsScreenContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = paddingValues.calculateTopPadding())
-                .verticalScroll(rememberScrollState())
-                .padding(WindowInsets.navigationBars.asPaddingValues())
-                .fillMaxHeight(),
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState()),
         ) {
             SwitchPreference(
                 title = stringResource(Res.string.leakcanary),

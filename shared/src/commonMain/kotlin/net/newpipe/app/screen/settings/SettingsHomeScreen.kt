@@ -5,10 +5,9 @@
 
 package net.newpipe.app.screen.settings
 
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -91,6 +90,7 @@ fun SettingsHomeScreenContent(
     onSearchClick: () -> Unit = {}
 ) {
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = stringResource(Res.string.settings),
@@ -109,8 +109,7 @@ fun SettingsHomeScreenContent(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = paddingValues.calculateTopPadding()),
-            contentPadding = WindowInsets.navigationBars.asPaddingValues()
+                .padding(paddingValues)
         ) {
             items(items = categories) { category ->
                 PreferenceRow(

@@ -977,7 +977,11 @@ public final class Player implements PlaybackListener, Listener {
         return simpleExoPlayer.getPlaybackParameters();
     }
 
-    /** Sets playback parameters without changing the user's saved defaults. */
+    /**
+     * Sets playback parameters without changing the user's saved defaults.
+     *
+     * @param parameters playback parameters to apply temporarily
+     */
     public void setTemporaryPlaybackParameters(final PlaybackParameters parameters) {
         if (!exoPlayerIsNull()) {
             simpleExoPlayer.setPlaybackParameters(parameters);

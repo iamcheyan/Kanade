@@ -6,6 +6,8 @@
 package net.newpipe.app.screen.about
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -54,6 +56,7 @@ fun AboutScreenContent(
     }
 ) {
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = stringResource(Res.string.title_activity_about),
@@ -64,7 +67,7 @@ fun AboutScreenContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = paddingValues.calculateTopPadding())
+                .padding(paddingValues)
         ) {
             val pagerState = rememberPagerState { pages.size }
             val coroutineScope = rememberCoroutineScope()

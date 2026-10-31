@@ -6,10 +6,9 @@
 package net.newpipe.app.screen.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -216,6 +215,7 @@ fun DownloadSettingsScreenContent(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.systemBars,
         topBar = {
             TopAppBar(
                 title = stringResource(Res.string.settings_category_downloads_title),
@@ -226,9 +226,8 @@ fun DownloadSettingsScreenContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = paddingValues.calculateTopPadding())
+                .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
-                .padding(WindowInsets.navigationBars.asPaddingValues())
         ) {
             SwitchPreference(
                 title = stringResource(Res.string.downloads_storage_ask_title),

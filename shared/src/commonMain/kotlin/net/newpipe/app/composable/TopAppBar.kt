@@ -6,6 +6,9 @@
 package net.newpipe.app.composable
 
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -43,7 +46,7 @@ fun TopAppBar(
     actions: @Composable (RowScope.() -> Unit) = {}
 ) {
     TopAppBar(
-        modifier = modifier,
+        modifier = modifier.windowInsetsPadding(WindowInsets.statusBars),
         colors = colors,
         title = { if (title != null) Text(text = title) },
         navigationIcon = {
