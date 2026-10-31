@@ -7,8 +7,11 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.os.postDelayed
+import com.google.android.exoplayer2.PlaybackParameters
+import org.schabi.newpipe.R
 import org.schabi.newpipe.databinding.PlayerBinding
 import org.schabi.newpipe.player.Player
+import org.schabi.newpipe.player.helper.PlayerHelper
 import org.schabi.newpipe.player.ui.VideoPlayerUi
 
 /**
@@ -23,9 +26,53 @@ abstract class BasePlayerGestureListener(
 
     protected val player: Player = playerUi.player
     protected val binding: PlayerBinding = playerUi.binding
+    private var speedBeforeLongPress: PlaybackParameters? = null
+
+    private val hideSpeedOverlay = Runnable { binding.temporarySpeedOverlay.visibility = View.GONE }
+
+    override fun onLongPress(e: MotionEvent) {
+        super.onLongPress(e)
+        if (player.currentState != Player.STATE_PLAYING || speedBeforeLongPress != null ||
+            player.exoPlayerIsNull()
+        ) {
+            return
+        }
+
+        speedBeforeLongPress = player.getPlaybackParameters()
+        player.setTemporaryPlaybackParameters(
+            PlaybackParameters(2f, player.playbackPitch)
+        )
+        binding.temporarySpeedOverlay.apply {
+            removeCallbacks(hideSpeedOverlay)
+            setText(R.string.temporary_double_speed)
+            visibility = View.VISIBLE
+        }
+    }
+
+    fun restoreSpeedAfterLongPress() {
+        val previousParameters = speedBeforeLongPress ?: return
+        speedBeforeLongPress = null
+        player.setTemporaryPlaybackParameters(previousParameters)
+        binding.temporarySpeedOverlay.apply {
+            removeCallbacks(hideSpeedOverlay)
+            setText(
+                context.getString(
+                    R.string.temporary_original_speed,
+                    PlayerHelper.formatSpeed(previousParameters.speed.toDouble())
+                )
+            )
+            visibility = View.VISIBLE
+            postDelayed(hideSpeedOverlay, 700)
+        }
+    }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
-        playerUi.gestureDetector.onTouchEvent(event)
+        playerUi.getGestureDetector().onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL
+        ) {
+            restoreSpeedAfterLongPress()
+        }
         return false
     }
 
@@ -40,7 +87,7 @@ abstract class BasePlayerGestureListener(
                     player.playerType + "], portion = [" + portion + "]"
             )
         }
-        if (playerUi.isSomePopupMenuVisible) {
+        if (playerUi.isSomePopupMenuVisible()) {
             playerUi.hideControls(0, 0)
         }
         if (portion === DisplayPortion.LEFT || portion === DisplayPortion.RIGHT) {
@@ -54,7 +101,7 @@ abstract class BasePlayerGestureListener(
     }
 
     protected fun onSingleTap() {
-        if (playerUi.isControlsVisible) {
+        if (playerUi.isControlsVisible()) {
             playerUi.hideControls(150, 0)
             return
         }
@@ -76,7 +123,7 @@ abstract class BasePlayerGestureListener(
                     player.playerType + "]"
             )
         }
-        if (playerUi.isControlsVisible && player.currentState == Player.STATE_PLAYING) {
+        if (playerUi.isControlsVisible() && player.currentState == Player.STATE_PLAYING) {
             playerUi.hideControls(
                 VideoPlayerUi.DEFAULT_CONTROLS_DURATION,
                 VideoPlayerUi.DEFAULT_CONTROLS_HIDE_TIME

@@ -41,7 +41,7 @@ configure<ApplicationExtension> {
 
     defaultConfig {
         applicationId = JM21_APPLICATION_ID
-        resValue("string", "app_name", "NewPipe")
+        resValue("string", "app_name", "Kanade")
         minSdk {
             version = release(NEWPIPE_VERSION_SDK_MIN)
         }
@@ -65,7 +65,7 @@ configure<ApplicationExtension> {
             // only copy, so letting the git branch rename it would create a
             // second app instead of replacing the first.
             applicationIdSuffix = ".debug"
-            resValue("string", "app_name", "JM21")
+            resValue("string", "app_name", "Kanade")
         }
 
         release {

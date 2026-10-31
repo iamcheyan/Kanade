@@ -56,6 +56,9 @@ class OfflinePlayerActivity : AppCompatActivity() {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var controlsOverlay: android.view.View? = null
     private var progressTicker: Runnable? = null
+    private var currentVideoId: String = ""
+    private var currentAccount: String = ""
+    private var resumePositionSec: Long = 0
     private var attachAttempts = 0
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -148,8 +151,27 @@ class OfflinePlayerActivity : AppCompatActivity() {
         }
         column.addView(playerBox, playerParams)
 
-        // Everything under the player hides in landscape so the video is full
-        // screen, which is what the expand button is for.
+        // Only the player stays put; the title block scrolls away with the
+        // list so a long scroll leaves nothing but the video on screen.
+        val rest = RecyclerView(this).apply {
+            id = android.R.id.list
+            layoutManager = LinearLayoutManager(this@OfflinePlayerActivity)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        }
+        rest.adapter = HeaderAdapter()
+        column.addView(rest)
+
+        container.addView(column)
+
+        setContentView(container)
+    }
+
+    /** The title block, rendered as row 0 of the list. */
+    private fun buildInfoRow(): View {
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 16, 24, 8)
@@ -173,22 +195,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
         metaView = metaText
         info.addView(metaText)
 
-        column.addView(info)
-
-        val rest = RecyclerView(this).apply {
-            id = android.R.id.list
-            layoutManager = LinearLayoutManager(this@OfflinePlayerActivity)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        }
-        column.addView(rest)
-
-        container.addView(column)
-
-        setContentView(container)
+        return info
     }
 
     /**
@@ -346,6 +353,62 @@ class OfflinePlayerActivity : AppCompatActivity() {
         scheduleAttach()
     }
 
+    /**
+     * Seek to the remembered position once the player has the item ready.
+     *
+     * seekTo before prepare would be dropped, so this retries briefly instead
+     * of depending on a single lucky timing.
+     */
+    private fun applyResumePosition() {
+        if (resumePositionSec <= 0) return
+        var attempts = 0
+        val run = object : Runnable {
+            override fun run() {
+                val exo = OfflinePlayerService.player ?: return
+                val ready = exo.playbackState == com.google.android.exoplayer2.Player.STATE_READY
+                if (ready && exo.duration > 0) {
+                    // Ignore a saved position at the very end: starting there
+                    // would look like the video finished.
+                    val target = resumePositionSec * 1000
+                    if (target < exo.duration - 5000) {
+                        exo.seekTo(target)
+                    }
+                    return
+                }
+                if (++attempts < 100) handler.postDelayed(this, 100)
+            }
+        }
+        handler.post(run)
+    }
+
+    /** Save every 10 s while playing, so a crash loses at most that much. */
+    private fun scheduleProgressSaves() {
+        val save = object : Runnable {
+            override fun run() {
+                persistProgress()
+                handler.postDelayed(this, 10_000)
+            }
+        }
+        handler.postDelayed(save, 10_000)
+    }
+
+    /** Persist the position so the next open resumes here. */
+    private fun persistProgress() {
+        val exo = OfflinePlayerService.player ?: return
+        if (currentVideoId.isEmpty() || currentAccount.isEmpty()) return
+        val position = exo.currentPosition / 1000
+        val duration = exo.duration / 1000
+        if (position <= 0) return
+        val id = currentVideoId
+        val account = currentAccount
+        disposables.add(
+            io.reactivex.rxjava3.core.Completable
+                .fromAction { client.saveProgress(account, id, position, duration) }
+                .subscribeOn(Schedulers.io())
+                .subscribe({}, {})
+        )
+    }
+
     /** Show or hide the overlay in response to a tap on the video. */
     private fun toggleControls() {
         val overlay = controlsOverlay ?: return
@@ -414,6 +477,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
                 // still being created.
                 progressTicker?.let { handler.removeCallbacks(it) }
                 progressTicker?.let { handler.post(it) }
+                scheduleProgressSaves()
                 return
             }
             if (++attachAttempts < 60) {
@@ -435,16 +499,22 @@ class OfflinePlayerActivity : AppCompatActivity() {
         videoId: String,
         streamUrl: String
     ) {
+        currentVideoId = videoId
+        currentAccount = account
         disposables.add(
             Single.fromCallable {
                 val library = client.libraryAll()
                 val current = library.firstOrNull { it.id == videoId }
-                current to library.filter { it.id != videoId }
+                // Fetch the saved position before starting playback so the very
+                // first frame already lands where the user stopped.
+                val resume = client.resumePosition(account, videoId)
+                Triple(current, library.filter { it.id != videoId }, resume)
             }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { (current, others) ->
+                    { (current, others, resume) ->
+                        resumePositionSec = resume
                         titleView?.text = current?.title ?: ""
                         metaView?.text = buildMeta(current)
                         current?.thumbnail?.let {
@@ -461,8 +531,11 @@ class OfflinePlayerActivity : AppCompatActivity() {
                                 streamUrl,
                                 current.title,
                                 Sources.label(account),
-                                current.thumbnail
+                                current.thumbnail,
+                                current.id,
+                                account
                             )
+                            applyResumePosition()
                         }
                         showSuggestions(others)
                     },
@@ -486,21 +559,18 @@ class OfflinePlayerActivity : AppCompatActivity() {
     /** Fill the list under the player with the other downloaded items. */
     private fun showSuggestions(items: List<OfflineVideo>) {
         val list = root?.findViewById<RecyclerView>(android.R.id.list) ?: return
-        if (list.adapter == null) {
-            list.adapter = SuggestionAdapter(items)
-        } else {
-            (list.adapter as SuggestionAdapter).submit(items)
-        }
+        (list.adapter as? HeaderAdapter)?.submit(items)
     }
 
-    /** Compact rows; tapping one switches playback to that video. */
-    private inner class SuggestionAdapter(startItems: List<OfflineVideo>) :
-        RecyclerView.Adapter<SuggestionAdapter.Holder>() {
+    /**
+     * The title block followed by one row per other download.
+     *
+     * The title is an ordinary row rather than a view above the list: that is
+     * what makes it scroll away with the recommendations instead of staying
+     * pinned while the list moves underneath it.
+     */
+    private inner class HeaderAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private val items = ArrayList<OfflineVideo>()
-
-        init {
-            submit(startItems)
-        }
 
         fun submit(next: List<OfflineVideo>) {
             items.clear()
@@ -508,7 +578,12 @@ class OfflinePlayerActivity : AppCompatActivity() {
             notifyDataSetChanged()
         }
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+        override fun getItemViewType(position: Int): Int = if (position == 0) TYPE_HEADER else TYPE_ROW
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            if (viewType == TYPE_HEADER) {
+                return object : RecyclerView.ViewHolder(buildInfoRow()) {}
+            }
             val row = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(24, 12, 24, 12)
@@ -537,16 +612,18 @@ class OfflinePlayerActivity : AppCompatActivity() {
             textColumn.addView(meta)
             row.addView(thumb)
             row.addView(textColumn)
-            return Holder(row, thumb, title, meta)
+            return RowHolder(row, thumb, title, meta)
         }
 
-        override fun onBindViewHolder(holder: Holder, position: Int) {
-            holder.bind(items[position])
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            if (holder is RowHolder) {
+                holder.bind(items[position - 1])
+            }
         }
 
-        override fun getItemCount(): Int = items.size
+        override fun getItemCount(): Int = items.size + 1
 
-        inner class Holder(
+        inner class RowHolder(
             private val row: LinearLayout,
             private val thumb: ImageView,
             private val title: TextView,
@@ -572,6 +649,11 @@ class OfflinePlayerActivity : AppCompatActivity() {
         if (bound) scheduleAttach()
     }
 
+    override fun onStop() {
+        super.onStop()
+        persistProgress()
+    }
+
     override fun onDestroy() {
         handler.removeCallbacks(attachRunnable)
         progressTicker?.let { handler.removeCallbacks(it) }
@@ -588,7 +670,8 @@ class OfflinePlayerActivity : AppCompatActivity() {
     companion object {
         private const val EXTRA_ID = "video_id"
         private const val EXTRA_ACCOUNT = "account"
-
+        private const val TYPE_HEADER = 0
+        private const val TYPE_ROW = 1
         fun intent(context: Context, videoId: String, account: String): Intent = Intent(context, OfflinePlayerActivity::class.java).apply {
             putExtra(EXTRA_ID, videoId)
             putExtra(EXTRA_ACCOUNT, account)

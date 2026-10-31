@@ -356,13 +356,17 @@ public final class NavigationHelper {
      * This build's home is the offline library: the device exists to play
      * videos that are already downloaded, so the library is the landing
      * screen and everything else is reached from the drawer.
+     *
+     * @param fragmentManager the manager that receives the transaction
      */
     public static void gotoMainFragment(final FragmentManager fragmentManager) {
         fragmentManager.popBackStackImmediate(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
         defaultTransaction(fragmentManager)
                 .replace(R.id.fragment_holder,
-                        new org.schabi.newpipe.local.offline.OfflineLibraryFragment())
-                .addToBackStack(MAIN_FRAGMENT_TAG)
+                        org.schabi.newpipe.local.offline.OfflineLibraryFragment
+                                .Companion.newInstance(null))
+                // No back-stack entry: the home screen must not offer a back
+                // arrow, and the drawer is the way to move between sections.
                 .commit();
     }
 
@@ -628,6 +632,41 @@ public final class NavigationHelper {
                 .replace(R.id.fragment_holder,
                         new org.schabi.newpipe.local.offline.OfflineLibraryFragment())
                 .addToBackStack(null)
+                .commit();
+    }
+
+    /**
+     * Opens this build's settings screen.
+     *
+     * @param fragmentManager the manager that receives the transaction
+     */
+    public static void openOfflineSettings(final FragmentManager fragmentManager) {
+        defaultTransaction(fragmentManager)
+                .replace(R.id.fragment_holder,
+                        new org.schabi.newpipe.local.offline.SettingsFragment())
+                .addToBackStack(null)
+                .commit();
+    }
+
+    /**
+     * Opens the offline library, optionally narrowed to one source.
+     *
+     * @param fragmentManager the manager that receives the transaction
+     * @param account         "youtube", "bilibili", or {@code null} for all
+     */
+    public static void openLibrary(final FragmentManager fragmentManager,
+                                   final String account) {
+        // The three library entries are peer home screens, not a drill-down
+        // stack: selecting another one replaces the current page so the
+        // toolbar keeps its hamburger icon and back never walks through them.
+        final int current = fragmentManager.getBackStackEntryCount();
+        if (current > 0) {
+            fragmentManager.popBackStack();
+        }
+        defaultTransaction(fragmentManager)
+                .replace(R.id.fragment_holder,
+                        org.schabi.newpipe.local.offline.OfflineLibraryFragment
+                                .Companion.newInstance(account))
                 .commit();
     }
 

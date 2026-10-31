@@ -1,12 +1,18 @@
 package org.schabi.newpipe.local.offline
 
-import android.content.Intent
+import android.content.Context
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.TextView
+import android.view.inputmethod.InputMethodManager
+import androidx.appcompat.widget.PopupMenu
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
@@ -16,15 +22,13 @@ import org.schabi.newpipe.BaseFragment
 import org.schabi.newpipe.R
 import org.schabi.newpipe.databinding.FragmentOfflineLibraryBinding
 import org.schabi.newpipe.databinding.ItemOfflineVideoBinding
+import org.schabi.newpipe.util.NavigationHelper
 import org.schabi.newpipe.util.image.CoilHelper
 
 /**
- * Shows the videos videod has already downloaded and plays them offline.
- *
- * NewPipe has no built-in local-file player: its download flow hands the file
- * to an external app. This fragment fills that gap for the fork without
- * touching the Extractor-bound service model, so the rest of NewPipe keeps
- * working unchanged.
+ * Modern Gramophone-inspired offline library fragment.
+ * Features a large stylish header "Kanade", category tabs (All / Bilibili / YouTube),
+ * fast search & sort, rounded cover cards, and full edge-to-edge support.
  */
 class OfflineLibraryFragment : BaseFragment() {
 
@@ -35,20 +39,52 @@ class OfflineLibraryFragment : BaseFragment() {
     private val disposables = CompositeDisposable()
     private val adapter = OfflineAdapter()
 
+    private val allVideos = ArrayList<OfflineVideo>()
+    private val displayedVideos = ArrayList<OfflineVideo>()
+    private val progressById = HashMap<String, Long>()
+
+    private var currentAccountFilter: String? = null
+    private var currentSearchQuery: String = ""
+    private var currentSortMode: Int = SORT_DEFAULT
+
+    companion object {
+        private const val ARG_ACCOUNT = "account"
+        private const val SORT_DEFAULT = 0
+        private const val SORT_DURATION_DESC = 1
+        private const val SORT_DURATION_ASC = 2
+        private const val SORT_TITLE = 3
+        private const val SORT_RESUME = 4
+
+        fun newInstance(account: String?): OfflineLibraryFragment = OfflineLibraryFragment().apply {
+            arguments = Bundle().apply {
+                if (account != null) putString(ARG_ACCOUNT, account)
+            }
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        setTitle(getString(R.string.offline_library_title))
         _binding = FragmentOfflineLibraryBinding.inflate(inflater, container, false)
-        binding.offlineList.layoutManager = LinearLayoutManager(requireContext())
-        binding.offlineList.adapter = adapter
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // Initial filter from arguments if any
+        currentAccountFilter = arguments?.getString(ARG_ACCOUNT)
+
+        setupInsets()
+        setupHeaderActions()
+        setupTabs()
+        setupSearch()
+
+        binding.offlineList.layoutManager = LinearLayoutManager(requireContext())
+        binding.offlineList.adapter = adapter
+
         loadLibrary()
     }
 
@@ -58,12 +94,144 @@ class OfflineLibraryFragment : BaseFragment() {
         super.onDestroyView()
     }
 
-    /**
-     * Fetch the library on a background thread.
-     *
-     * An unreachable videod is the expected state on a fresh install, so the
-     * error text names the service and the address instead of logging only.
-     */
+    private fun setupInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.headerContainer) { view, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val baseTop = (16 * resources.displayMetrics.density).toInt()
+            view.setPadding(view.paddingLeft, top + baseTop, view.paddingRight, view.paddingBottom)
+            insets
+        }
+        binding.offlineList.setPadding(
+            binding.offlineList.paddingLeft,
+            (4 * resources.displayMetrics.density).toInt(),
+            binding.offlineList.paddingRight,
+            binding.offlineList.paddingBottom
+        )
+        binding.headerContainer.addOnLayoutChangeListener { header, _, _, _, _, _, _, _, _ ->
+            val top = header.height + (4 * resources.displayMetrics.density).toInt()
+            binding.offlineList.setPadding(
+                binding.offlineList.paddingLeft,
+                top,
+                binding.offlineList.paddingRight,
+                binding.offlineList.paddingBottom
+            )
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { list, insets ->
+            val bottomInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+            val baseBottom = (96 * resources.displayMetrics.density).toInt()
+            list.setPadding(
+                list.paddingLeft,
+                list.paddingTop,
+                list.paddingRight,
+                baseBottom + bottomInset
+            )
+            WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    private fun setupHeaderActions() {
+        binding.btnSettings.setOnClickListener {
+            NavigationHelper.openOfflineSettings(parentFragmentManager)
+        }
+
+        binding.btnSort.setOnClickListener {
+            showSortMenu()
+        }
+    }
+
+    private fun setupTabs() {
+        binding.sourceFilter.setOnClickListener { anchor ->
+            val popup = PopupMenu(requireContext(), anchor)
+            popup.menu.add(0, 0, 0, getString(R.string.drawer_all))
+            popup.menu.add(0, 1, 1, getString(R.string.drawer_bilibili))
+            popup.menu.add(0, 2, 2, getString(R.string.drawer_youtube))
+            popup.setOnMenuItemClickListener { item ->
+                selectTab(
+                    when (item.itemId) {
+                        1 -> Sources.BILIBILI
+                        2 -> Sources.YOUTUBE
+                        else -> null
+                    }
+                )
+                true
+            }
+            popup.show()
+        }
+        updateTabsUI()
+    }
+
+    private fun selectTab(account: String?) {
+        if (currentAccountFilter == account) return
+        currentAccountFilter = account
+        updateTabsUI()
+        applyFilterAndSort()
+    }
+
+    private fun updateTabsUI() {
+        binding.sourceFilter.setText(
+            when (currentAccountFilter) {
+                Sources.BILIBILI -> R.string.drawer_bilibili
+                Sources.YOUTUBE -> R.string.drawer_youtube
+                else -> R.string.drawer_all
+            }
+        )
+    }
+
+    private fun setupSearch() {
+        binding.btnSearch.setOnClickListener {
+            if (binding.searchBarContainer.visibility == View.VISIBLE) {
+                binding.searchBarContainer.visibility = View.GONE
+                binding.searchEditText.setText("")
+                hideKeyboard(binding.searchEditText)
+            } else {
+                binding.searchBarContainer.visibility = View.VISIBLE
+                binding.searchEditText.requestFocus()
+                showKeyboard(binding.searchEditText)
+            }
+        }
+
+        binding.btnClearSearch.setOnClickListener {
+            binding.searchEditText.setText("")
+            binding.searchBarContainer.visibility = View.GONE
+            hideKeyboard(binding.searchEditText)
+        }
+
+        binding.searchEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                currentSearchQuery = s?.toString()?.trim() ?: ""
+                applyFilterAndSort()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+    }
+
+    private fun showKeyboard(view: View) {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard(view: View) {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
+    private fun showSortMenu() {
+        val popup = PopupMenu(requireContext(), binding.btnSort)
+        popup.menu.add(0, SORT_DEFAULT, 0, getString(R.string.sort_default))
+        popup.menu.add(0, SORT_DURATION_DESC, 1, getString(R.string.sort_duration_desc))
+        popup.menu.add(0, SORT_DURATION_ASC, 2, getString(R.string.sort_duration_asc))
+        popup.menu.add(0, SORT_TITLE, 3, getString(R.string.sort_title))
+        popup.menu.add(0, SORT_RESUME, 4, getString(R.string.sort_resume))
+
+        popup.setOnMenuItemClickListener { item ->
+            currentSortMode = item.itemId
+            applyFilterAndSort()
+            true
+        }
+        popup.show()
+    }
+
     private fun loadLibrary() {
         showStatus(
             getString(R.string.offline_library_loading),
@@ -71,20 +239,24 @@ class OfflineLibraryFragment : BaseFragment() {
         )
         disposables.add(
             io.reactivex.rxjava3.core.Single
-                .fromCallable { client.libraryAll() }
+                .fromCallable {
+                    val all = client.libraryAll()
+                    val positions = HashMap<String, Long>()
+                    for (item in all) {
+                        val p = client.resumePosition(item.accountId, item.id)
+                        if (p > 0) positions[item.id] = p
+                    }
+                    all to positions
+                }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { videos ->
-                        if (videos.isEmpty()) {
-                            showStatus(
-                                getString(R.string.offline_library_empty),
-                                getString(R.string.offline_library_empty_detail)
-                            )
-                        } else {
-                            hideStatus()
-                            adapter.submit(videos)
-                        }
+                    { (videos, positions) ->
+                        allVideos.clear()
+                        allVideos.addAll(videos)
+                        progressById.clear()
+                        progressById.putAll(positions)
+                        applyFilterAndSort()
                     },
                     { error ->
                         showStatus(
@@ -94,6 +266,41 @@ class OfflineLibraryFragment : BaseFragment() {
                     }
                 )
         )
+    }
+
+    private fun applyFilterAndSort() {
+        var filtered = allVideos.filter { video ->
+            val matchAccount = currentAccountFilter == null || video.accountId == currentAccountFilter
+            val matchQuery = currentSearchQuery.isEmpty() ||
+                video.title.contains(currentSearchQuery, ignoreCase = true)
+            matchAccount && matchQuery
+        }
+
+        filtered = when (currentSortMode) {
+            SORT_DURATION_DESC -> filtered.sortedByDescending { it.duration }
+            SORT_DURATION_ASC -> filtered.sortedBy { it.duration }
+            SORT_TITLE -> filtered.sortedBy { it.title.lowercase() }
+            SORT_RESUME -> filtered.sortedByDescending { progressById[it.id] ?: 0L }
+            else -> filtered
+        }
+
+        displayedVideos.clear()
+        displayedVideos.addAll(filtered)
+
+        if (allVideos.isEmpty()) {
+            showStatus(
+                getString(R.string.offline_library_empty),
+                getString(R.string.offline_library_empty_detail)
+            )
+        } else if (displayedVideos.isEmpty()) {
+            showStatus(
+                getString(R.string.sources_empty),
+                ""
+            )
+        } else {
+            hideStatus()
+            adapter.submit(displayedVideos)
+        }
     }
 
     private fun showStatus(title: String, detail: String) {
@@ -108,19 +315,13 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.offlineList.visibility = View.VISIBLE
     }
 
-    /**
-     * Play a downloaded file.
-     *
-     * The file itself is not readable by this app: videod runs as a different
-     * uid and its data directory is mode 0700, so a file:// or FileProvider
-     * URI fails. videod serves the same bytes over HTTP with Range support,
-     * which is both readable and what ExoPlayer needs for seeking.
-     */
-    private fun play(video: OfflineVideo) {
+    private fun play(video: OfflineVideo, fromStart: Boolean = false) {
         try {
-            startActivity(
-                OfflinePlayerActivity.intent(requireContext(), video.id, video.accountId)
-            )
+            val intent = OfflinePlayerActivity.intent(requireContext(), video.id, video.accountId)
+            if (fromStart) {
+                intent.putExtra("from_start", true)
+            }
+            startActivity(intent)
         } catch (e: Exception) {
             showStatus(
                 getString(R.string.offline_library_no_player),
@@ -129,7 +330,25 @@ class OfflineLibraryFragment : BaseFragment() {
         }
     }
 
-    /** Mark watched: local removal plus remote write-back when supported. */
+    private fun deleteDownload(video: OfflineVideo) {
+        disposables.add(
+            io.reactivex.rxjava3.core.Single.fromCallable {
+                client.deleteLibrary(video.accountId, video.id)
+            }
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    { loadLibrary() },
+                    { error ->
+                        showStatus(
+                            getString(R.string.offline_library_delete_failed),
+                            error.message ?: error.javaClass.simpleName
+                        )
+                    }
+                )
+        )
+    }
+
     private fun markWatched(video: OfflineVideo) {
         disposables.add(
             io.reactivex.rxjava3.core.Single
@@ -146,15 +365,6 @@ class OfflineLibraryFragment : BaseFragment() {
                     }
                 )
         )
-    }
-
-    private fun mimeTypeFor(name: String): String = when {
-        name.endsWith(".mp4", true) -> "video/mp4"
-        name.endsWith(".webm", true) -> "video/webm"
-        name.endsWith(".mkv", true) -> "video/x-matroska"
-        name.endsWith(".m4a", true) -> "audio/mp4"
-        name.endsWith(".opus", true) -> "audio/opus"
-        else -> "video/*"
     }
 
     private inner class OfflineAdapter : RecyclerView.Adapter<OfflineAdapter.Holder>() {
@@ -188,14 +398,40 @@ class OfflineLibraryFragment : BaseFragment() {
                 itemBinding.offlineItemTitle.text = video.title
                 itemBinding.offlineItemMeta.text = buildMeta(video)
                 CoilHelper.loadThumbnail(itemBinding.offlineItemThumbnail, video.thumbnail)
+
                 itemBinding.root.setOnClickListener { play(video) }
+
+                itemBinding.offlineItemMenu.setOnClickListener {
+                    showItemPopupMenu(itemBinding.offlineItemMenu, video)
+                }
+
                 itemBinding.root.setOnLongClickListener {
-                    markWatched(video)
+                    showItemPopupMenu(itemBinding.offlineItemMenu, video)
                     true
                 }
             }
 
-            /** "mm:ss · Bilibili" plus the file name, so rows stay distinct. */
+            private fun showItemPopupMenu(anchor: View, video: OfflineVideo) {
+                val popup = PopupMenu(requireContext(), anchor)
+                popup.menu.add(0, 1, 0, getString(R.string.offline_play))
+                popup.menu.add(0, 2, 1, getString(R.string.offline_play_from_start))
+                if (video.remoteMissingSince.isEmpty()) {
+                    popup.menu.add(0, 3, 2, getString(R.string.offline_mark_watched))
+                }
+                popup.menu.add(0, 4, 3, getString(R.string.offline_remove_from_library))
+
+                popup.setOnMenuItemClickListener { menuItem ->
+                    when (menuItem.itemId) {
+                        1 -> play(video, false)
+                        2 -> play(video, true)
+                        3 -> markWatched(video)
+                        4 -> deleteDownload(video)
+                    }
+                    true
+                }
+                popup.show()
+            }
+
             private fun buildMeta(video: OfflineVideo): String {
                 val minutes = video.duration / 60
                 val seconds = video.duration % 60
@@ -205,7 +441,15 @@ class OfflineLibraryFragment : BaseFragment() {
                     "youtube" -> getString(R.string.offline_source_youtube)
                     else -> video.accountId
                 }
-                return "$length · $source"
+                val resume = progressById[video.id] ?: 0L
+                return if (resume > 0) {
+                    "$length · $source · " + getString(
+                        R.string.offline_resume_at,
+                        formatSeconds(resume)
+                    )
+                } else {
+                    "$length · $source"
+                }
             }
         }
     }

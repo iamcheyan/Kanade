@@ -821,6 +821,17 @@
         android:textColor="@color/white"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/temporarySpeedOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:background="@drawable/player_controls_background"
+        android:padding="16dp"
+        android:text="@string/temporary_double_speed"
+        android:textColor="@android:color/white"
+        android:textSize="20sp"
+        android:visibility="gone" />
     <org.schabi.newpipe.views.player.PlayerFastSeekOverlay
         android:id="@+id/fast_seek_overlay"
         android:layout_width="match_parent"

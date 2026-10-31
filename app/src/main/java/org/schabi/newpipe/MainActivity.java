@@ -77,6 +77,8 @@ import org.schabi.newpipe.fragments.detail.VideoDetailFragment;
 import org.schabi.newpipe.fragments.list.comments.CommentRepliesFragment;
 import org.schabi.newpipe.fragments.list.search.SearchFragment;
 import org.schabi.newpipe.local.feed.notifications.NotificationWorker;
+import org.schabi.newpipe.local.offline.MiniPlayerBar;
+import org.schabi.newpipe.local.offline.OfflinePlayerService;
 import org.schabi.newpipe.player.Player;
 import org.schabi.newpipe.player.event.OnKeyDownListener;
 import org.schabi.newpipe.player.helper.PlayerHolder;
@@ -85,7 +87,6 @@ import org.schabi.newpipe.settings.UpdateSettingsFragment;
 import org.schabi.newpipe.settings.migration.MigrationManager;
 import org.schabi.newpipe.util.Constants;
 import org.schabi.newpipe.util.DeviceUtils;
-import org.schabi.newpipe.util.KioskTranslator;
 import org.schabi.newpipe.util.Localization;
 import org.schabi.newpipe.util.NavigationHelper;
 import org.schabi.newpipe.util.PeertubeHelper;
@@ -113,6 +114,7 @@ public class MainActivity extends AppCompatActivity {
     private DrawerHeaderBinding drawerHeaderBinding;
     private DrawerLayoutBinding drawerLayoutBinding;
     private ToolbarLayoutBinding toolbarLayoutBinding;
+    private MiniPlayerBar miniPlayerBar;
 
     private ActionBarDrawerToggle toggle;
 
@@ -127,7 +129,12 @@ public class MainActivity extends AppCompatActivity {
     private static final int ITEM_ID_HISTORY = -5;
     private static final int ITEM_ID_OFFLINE_LIBRARY = -6;
     private static final int ITEM_ID_SOURCES = -7;
-    private static final int ITEM_ID_SETTINGS = 0;
+    private static final int ITEM_ID_LIBRARY_ALL = -10;
+    private static final int ITEM_ID_LIBRARY_YOUTUBE = -11;
+    private static final int ITEM_ID_LIBRARY_BILIBILI = -12;
+    // Must be negative: a menu item id of 0 is Menu.NONE, which the navigation
+    // view reports as "no selection" instead of dispatching a click.
+    private static final int ITEM_ID_SETTINGS = -8;
     private static final int ITEM_ID_DONATION = 1;
     private static final int ITEM_ID_ABOUT = 2;
 
@@ -175,11 +182,53 @@ public class MainActivity extends AppCompatActivity {
         toolbarLayoutBinding = mainBinding.toolbarLayout;
         setContentView(mainBinding.getRoot());
 
-        if (getSupportFragmentManager().getBackStackEntryCount() == 0) {
-            initFragments();
+        // Draw edge-to-edge behind both system bars. A translucent navigation
+        // scrim keeps the three-button area frosted over scrolling content.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(android.graphics.Color.rgb(13, 15, 20));
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+            getWindow().setNavigationBarDividerColor(android.graphics.Color.TRANSPARENT);
         }
 
-        setSupportActionBar(toolbarLayoutBinding.toolbar);
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(mainBinding.getRoot(),
+                (v, insets) -> {
+            final androidx.core.graphics.Insets bars = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            final ViewGroup.MarginLayoutParams miniParams =
+                    (ViewGroup.MarginLayoutParams)
+                            mainBinding.miniPlayer.getRoot().getLayoutParams();
+            final float density = getResources().getDisplayMetrics().density;
+            miniParams.bottomMargin = bars.bottom;
+            mainBinding.miniPlayer.getRoot().setLayoutParams(miniParams);
+
+            toolbarLayoutBinding.getRoot().setPadding(0, bars.top, 0, 0);
+            return insets;
+        });
+
+        // The collapsed player is shared by every list screen, so it belongs
+        // to the activity rather than to a fragment.
+        miniPlayerBar = new MiniPlayerBar(this, mainBinding.miniPlayer,
+                mainBinding.fragmentHolder,
+                visible -> {
+                    getWindow().setNavigationBarColor(android.graphics.Color.rgb(13, 15, 20));
+                    return kotlin.Unit.INSTANCE;
+                });
+        OfflinePlayerService.restore(this);
+        if (getSupportFragmentManager().getBackStackEntryCount() == 0) {
+            initFragments();
+            mainBinding.fragmentHolder.post(this::updateDrawerNavigation);
+        }
+        mainBinding.getRoot().post(() -> {
+            final Fragment fragment = getSupportFragmentManager()
+                    .findFragmentById(R.id.fragment_holder);
+            if (fragment instanceof org.schabi.newpipe.local.offline.OfflineLibraryFragment) {
+                toolbarLayoutBinding.getRoot().setVisibility(View.GONE);
+                mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+            }
+        });
+        updateDrawerNavigation();
         try {
             setupDrawer();
         } catch (final Exception e) {
@@ -231,13 +280,20 @@ public class MainActivity extends AppCompatActivity {
     protected void onStart() {
         super.onStart();
         sharedPrefEditor.putBoolean(KEY_IS_IN_BACKGROUND, false).apply();
+        if (miniPlayerBar != null) {
+            miniPlayerBar.attach();
+        }
         Log.d(TAG, "App moved to foreground");
     }
+
 
     @Override
     protected void onStop() {
         super.onStop();
         sharedPrefEditor.putBoolean(KEY_IS_IN_BACKGROUND, true).apply();
+        if (miniPlayerBar != null) {
+            miniPlayerBar.detach();
+        }
         Log.d(TAG, "App moved to background");
     }
     private void setupDrawer() throws ExtractionException {
@@ -246,6 +302,7 @@ public class MainActivity extends AppCompatActivity {
         toggle = new ActionBarDrawerToggle(this, mainBinding.getRoot(),
                 toolbarLayoutBinding.toolbar, R.string.drawer_open, R.string.drawer_close);
         toggle.syncState();
+        mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
         mainBinding.getRoot().addDrawerListener(toggle);
         mainBinding.getRoot().addDrawerListener(new DrawerLayout.SimpleDrawerListener() {
             private int lastService;
@@ -276,56 +333,29 @@ public class MainActivity extends AppCompatActivity {
      * @throws ExtractionException if the service didn't provide available kiosks
      */
     private void addDrawerMenuForCurrentService() throws ExtractionException {
-        //Tabs
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_SUBSCRIPTIONS, ORDER,
-                        R.string.tab_subscriptions)
-                .setIcon(R.drawable.ic_tv);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_FEED, ORDER, R.string.fragment_feed_title)
-                .setIcon(R.drawable.ic_subscriptions);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_BOOKMARKS, ORDER, R.string.tab_bookmarks)
-                .setIcon(R.drawable.ic_bookmark);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_DOWNLOADS, ORDER, R.string.downloads)
-                .setIcon(R.drawable.ic_file_download);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_HISTORY, ORDER, R.string.action_history)
-                .setIcon(R.drawable.ic_history);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_SOURCES, ORDER, R.string.sources_title)
-                .setIcon(R.drawable.ic_subscriptions);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_tabs_group, ITEM_ID_OFFLINE_LIBRARY, ORDER,
-                        R.string.offline_library_title)
-                .setIcon(R.drawable.ic_file_download);
+        // Four entries only: this build exists to play videos already on the
+        // device, so the upstream streaming tabs (subscriptions, feed,
+        // bookmarks, downloads, history, kiosks, donation, about) are not
+        // listed. Settings stays because the sync toggle and cookies live
+        // behind it.
+        addDrawerEntry(ITEM_ID_LIBRARY_ALL, R.string.drawer_all, R.drawable.ic_file_download);
+        addDrawerEntry(ITEM_ID_LIBRARY_YOUTUBE, R.string.drawer_youtube, R.drawable.ic_tv);
+        addDrawerEntry(ITEM_ID_LIBRARY_BILIBILI, R.string.drawer_bilibili,
+                R.drawable.ic_subscriptions);
+        addDrawerEntry(ITEM_ID_SETTINGS, R.string.settings, R.drawable.ic_settings);
+    }
 
-        //Kiosks
-        final int currentServiceId = ServiceHelper.getSelectedServiceId(this);
-        final StreamingService service = NewPipe.getService(currentServiceId);
-
-        int kioskMenuItemId = 0;
-
-        for (final String ks : service.getKioskList().getAvailableKiosks()) {
-            drawerLayoutBinding.navigation.getMenu()
-                    .add(R.id.menu_kiosks_group, kioskMenuItemId, 0, KioskTranslator
-                            .getTranslatedKioskName(ks, this))
-                    .setIcon(KioskTranslator.getKioskIcon(ks));
-            kioskMenuItemId++;
-        }
-
-        //Settings and About
+    /**
+     * Add one drawer row with the shared icon and text styling.
+     *
+     * @param id       menu item id handled by {@link #drawerItemSelected(MenuItem)}
+     * @param titleRes string resource shown as the row label
+     * @param iconRes  drawable resource shown as the row icon
+     */
+    private void addDrawerEntry(final int id, final int titleRes, final int iconRes) {
         drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_options_about_group, ITEM_ID_SETTINGS, ORDER, R.string.settings)
-                .setIcon(R.drawable.ic_settings);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_options_about_group, ITEM_ID_DONATION, ORDER,
-                        R.string.donation_title)
-                .setIcon(R.drawable.volunteer_activism_ic);
-        drawerLayoutBinding.navigation.getMenu()
-                .add(R.id.menu_options_about_group, ITEM_ID_ABOUT, ORDER, R.string.tab_about)
-                .setIcon(R.drawable.ic_info_outline);
+                .add(R.id.menu_tabs_group, id, ORDER, titleRes)
+                .setIcon(iconRes);
     }
 
     private boolean drawerItemSelected(final MenuItem item) {
@@ -383,7 +413,25 @@ public class MainActivity extends AppCompatActivity {
             case ITEM_ID_SOURCES:
                 NavigationHelper.openSources(getSupportFragmentManager());
                 break;
+            case ITEM_ID_LIBRARY_ALL:
+                NavigationHelper.openLibrary(getSupportFragmentManager(), null);
+                break;
+            case ITEM_ID_LIBRARY_YOUTUBE:
+                NavigationHelper.openLibrary(getSupportFragmentManager(), "youtube");
+                break;
+            case ITEM_ID_LIBRARY_BILIBILI:
+                NavigationHelper.openLibrary(getSupportFragmentManager(), "bilibili");
+                break;
+            case ITEM_ID_SETTINGS:
+                NavigationHelper.openOfflineSettings(getSupportFragmentManager());
+                break;
         }
+        refreshToolbarState();
+    }
+
+    /** Re-apply toolbar state after the drawer swapped the shown fragment. */
+    private void refreshToolbarState() {
+        updateDrawerNavigation();
     }
 
     private void kioskSelected(final MenuItem item) throws ExtractionException {
@@ -402,7 +450,8 @@ public class MainActivity extends AppCompatActivity {
     private void optionsAboutSelected(final MenuItem item) {
         switch (item.getItemId()) {
             case ITEM_ID_SETTINGS:
-                NavigationHelper.openSettings(this);
+                NavigationHelper.openOfflineSettings(getSupportFragmentManager());
+                refreshToolbarState();
                 break;
             case ITEM_ID_DONATION:
                 ShareUtils.openUrlInBrowser(this, getString(R.string.donation_url));
@@ -569,10 +618,8 @@ public class MainActivity extends AppCompatActivity {
             NavigationHelper.openMainActivity(this);
         }
 
-        final boolean isHistoryEnabled = sharedPreferences.getBoolean(
-                getString(R.string.enable_watch_history_key), true);
-        drawerLayoutBinding.navigation.getMenu().findItem(ITEM_ID_HISTORY)
-                .setVisible(isHistoryEnabled);
+        // The history entry is not part of this build's drawer, so there is
+        // nothing to show or hide here.
     }
 
     @Override
@@ -804,15 +851,16 @@ public class MainActivity extends AppCompatActivity {
 
         final Fragment fragment = getSupportFragmentManager()
                 .findFragmentById(R.id.fragment_holder);
-        if (fragment instanceof MainFragment) {
-            getSupportActionBar().setDisplayHomeAsUpEnabled(false);
-            if (toggle != null) {
-                toggle.syncState();
-                toolbarLayoutBinding.toolbar.setNavigationOnClickListener(v -> mainBinding.getRoot()
-                        .open());
-                mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_UNDEFINED);
-            }
+        // The offline library is this build's home page, so it owns the same
+        // drawer behaviour as the upstream main fragment: hamburger icon, no
+        // back arrow, drawer unlocked.
+        final boolean isHome = fragment instanceof MainFragment
+                || fragment instanceof org.schabi.newpipe.local.offline.OfflineLibraryFragment;
+        if (isHome) {
+            toolbarLayoutBinding.getRoot().setVisibility(View.GONE);
+            mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
         } else {
+            toolbarLayoutBinding.getRoot().setVisibility(View.VISIBLE);
             mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
             getSupportActionBar().setDisplayHomeAsUpEnabled(true);
             toolbarLayoutBinding.toolbar.setNavigationOnClickListener(v -> onHomeButtonPressed());

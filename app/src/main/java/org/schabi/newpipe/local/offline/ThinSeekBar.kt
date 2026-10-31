@@ -39,23 +39,29 @@ class ThinSeekBar @JvmOverloads constructor(
     /** Called while the user drags, with a 0..1 fraction. */
     var onSeek: ((Float) -> Unit)? = null
 
-    private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF0000.toInt() }
-    private val bufferedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66FFFFFF }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x44FFFFFF }
-    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF0000.toInt() }
+    private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF38BDF8.toInt() }
+    private val bufferedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x4038BDF8.toInt() }
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x22FFFFFF }
+    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF38BDF8.toInt() }
 
     private val density = resources.displayMetrics.density
     private val barHeight = 3f * density
     private val thumbRadius = 5f * density
+
+    /** True while the user is dragging the thumb. */
+    val isDragging: Boolean get() = dragging
+
     private var dragging = false
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        // Fixed height so the bar never pushes the row taller, but enough to
-        // touch comfortably.
-        setMeasuredDimension(
-            MeasureSpec.getSize(widthMeasureSpec),
+        // The expanded player asks for the full 32 dp touch target; the mini
+        // bar passes an exact height so the strip stays visually thin.
+        val height = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY) {
+            MeasureSpec.getSize(heightMeasureSpec)
+        } else {
             (32 * density).roundToInt()
-        )
+        }
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), height)
     }
 
     override fun onDraw(canvas: Canvas) {

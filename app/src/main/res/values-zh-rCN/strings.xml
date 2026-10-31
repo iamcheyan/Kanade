@@ -293,6 +293,8 @@
     <string name="metadata_cache_wipe_title">清空已缓存的元数据</string>
     <string name="metadata_cache_wipe_summary">清空已缓存的网页数据</string>
     <string name="metadata_cache_wipe_complete_notice">清空元数据缓存成功</string>
+    <string name="temporary_double_speed">2 倍速播放中</string>
+    <string name="temporary_original_speed">已恢复为 %1$s 倍速</string>
     <string name="playback_speed_control">播放速度控制</string>
     <string name="playback_tempo">节奏</string>
     <string name="playback_pitch">音调</string>

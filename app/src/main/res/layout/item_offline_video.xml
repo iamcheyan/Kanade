@@ -1,28 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="?attr/selectableItemBackground"
     android:clickable="true"
     android:focusable="true"
+    android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingStart="16dp"
-    android:paddingTop="12dp"
-    android:paddingEnd="16dp"
-    android:paddingBottom="12dp">
+    android:paddingTop="10dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="10dp">
 
-    <ImageView
-        android:id="@+id/offline_item_thumbnail"
-        android:layout_width="120dp"
-        android:layout_height="68dp"
-        android:background="?attr/colorBackgroundFloating"
-        android:contentDescription="@null"
-        android:scaleType="centerCrop" />
+    <!-- Rounded Thumbnail Card (10dp radius) -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="116dp"
+        android:layout_height="66dp"
+        app:cardCornerRadius="10dp"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="#151720">
 
+        <ImageView
+            android:id="@+id/offline_item_thumbnail"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop" />
+    </androidx.cardview.widget.CardView>
+
+    <!-- Title and Metadata Column -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="6dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
@@ -32,16 +44,32 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:maxLines="2"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+            android:textColor="#F1F3F7"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:lineSpacingExtra="2dp" />
 
         <TextView
             android:id="@+id/offline_item_meta"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="5dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textAppearance="?android:attr/textAppearanceSmall" />
-
+            android:textColor="#8A8F9D"
+            android:textSize="12sp" />
     </LinearLayout>
+
+    <!-- 3-Dots Menu (Gramophone Style) -->
+    <ImageButton
+        android:id="@+id/offline_item_menu"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@null"
+        android:padding="8dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_more_vert"
+        app:tint="#727786" />
+
 </LinearLayout>

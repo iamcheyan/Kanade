@@ -425,8 +425,14 @@ public abstract class VideoPlayerUi extends PlayerUi implements SeekBar.OnSeekBa
     @Override
     public void destroy() {
         super.destroy();
+        if (playerGestureListener != null) {
+            playerGestureListener.restoreSpeedAfterLongPress();
+        }
         binding.endScreen.setImageDrawable(null);
         deinitPlayerSeekOverlay();
+        binding.temporarySpeedOverlay.removeCallbacks(null);
+        binding.temporarySpeedOverlay.setVisibility(View.GONE);
+
         deinitListeners();
     }
 

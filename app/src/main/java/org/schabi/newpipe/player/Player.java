@@ -977,6 +977,12 @@ public final class Player implements PlaybackListener, Listener {
         return simpleExoPlayer.getPlaybackParameters();
     }
 
+    /** Sets playback parameters without changing the user's saved defaults. */
+    public void setTemporaryPlaybackParameters(final PlaybackParameters parameters) {
+        if (!exoPlayerIsNull()) {
+            simpleExoPlayer.setPlaybackParameters(parameters);
+        }
+    }
     /**
      * Sets the playback parameters of the player, and also saves them to shared preferences.
      * Speed and pitch are rounded up to 2 decimal places before being used or saved.

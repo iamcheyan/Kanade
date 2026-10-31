@@ -11,12 +11,21 @@
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/fragment_holder"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_marginTop="?attr/actionBarSize" />
+            android:layout_height="match_parent" />
 
         <include
             layout="@layout/toolbar_layout"
             android:id="@+id/toolbar_layout"/>
+
+        <!-- Collapsed player: sits above the list on every screen that is not
+             the full screen player, and expands back into it on tap. Placed
+             before the player sheet so the sheet draws over it. -->
+        <include
+            android:id="@+id/mini_player"
+            layout="@layout/view_mini_player"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom" />
 
         <androidx.fragment.app.FragmentContainerView
             android:id="@+id/fragment_player_holder"
