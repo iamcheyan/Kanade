@@ -131,4 +131,13 @@ class LibraryEntryTest {
         assertTrue(entries[0].isWatched)
         assertEquals(120L, entries[0].resumePosition)
     }
+
+    @Test
+    fun `history positions map rows and ignore entries without ids`() {
+        val positions = VideodClient().parseHistoryPositions(
+            """[{"video_id":"a","position_sec":120.75},{"id":"b","position_sec":0},{"video_id":"","position_sec":99}]"""
+        )
+
+        assertEquals(mapOf("a" to 120L, "b" to 0L), positions)
+    }
 }

@@ -76,6 +76,7 @@ class OfflineLibraryFragment : BaseFragment() {
     private val progressById = HashMap<String, Long>()
     private val pollingHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pollTask: Runnable? = null
+    private var isPageResumed = false
 
     private var currentAccountFilter: String? = null
     private var showWatchedOnly = false
@@ -96,17 +97,34 @@ class OfflineLibraryFragment : BaseFragment() {
         /** Sources read when no tab narrows the list. */
         private val SOURCE_ORDER = listOf(Sources.YOUTUBE, Sources.BILIBILI)
 
-        /**
-         * Two seconds is fast enough that a queued row visibly moves, and slow
-         * enough that a long download does not spin the loopback service.
-         */
-        private const val POLL_INTERVAL_MS = 2_000L
+        /** Download progress is best-effort; check at a moderate cadence. */
+        private const val POLL_INTERVAL_MS = 30_000L
 
+        /** One-time automatic sync per app session on launch. */
+        private var hasAutoSyncedThisSession = false
         fun newInstance(account: String?): OfflineLibraryFragment = OfflineLibraryFragment().apply {
             arguments = Bundle().apply {
                 if (account != null) putString(ARG_ACCOUNT, account)
             }
         }
+    }
+
+    override fun onPause() {
+        isPageResumed = false
+        pollTask?.let { pollingHandler.removeCallbacks(it) }
+        pollTask = null
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        accumulatedScrollY = 0
+        isMiniPlayerHidden = false
+        activity?.findViewById<View>(R.id.toolbar_layout)?.visibility = View.GONE
+        (activity as? MainActivity)?.setHomeMiniPlayerScrollHidden(false)
+        binding.appBarLayout.setExpanded(true, false)
+        isPageResumed = true
+        schedulePolling()
     }
 
     override fun onCreateView(
@@ -155,15 +173,6 @@ class OfflineLibraryFragment : BaseFragment() {
         disposables.clear()
         _binding = null
         super.onDestroyView()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        accumulatedScrollY = 0
-        isMiniPlayerHidden = false
-        activity?.findViewById<View>(R.id.toolbar_layout)?.visibility = View.GONE
-        (activity as? MainActivity)?.setHomeMiniPlayerScrollHidden(false)
-        binding.appBarLayout.setExpanded(true, false)
     }
 
     private fun setupInsets() {
@@ -479,9 +488,15 @@ class OfflineLibraryFragment : BaseFragment() {
 
         val visibleDownloads = downloaded.filter { source == null || it.accountId == source }
         val resumeById = HashMap<String, Long>()
-        for (video in visibleDownloads) {
-            val position = client.resumePosition(video.accountId, video.id)
-            if (position > 0) resumeById[video.id] = position
+        for (account in accounts) {
+            val accountVideoIds = visibleDownloads
+                .filter { it.accountId == account }
+                .mapTo(HashSet()) { it.id }
+            try {
+                resumeById.putAll(client.resumePositions(account, accountVideoIds))
+            } catch (e: Exception) {
+                // Resume positions are optional; the library itself still loads.
+            }
         }
         progressById.clear()
         progressById.putAll(resumeById)
@@ -522,6 +537,10 @@ class OfflineLibraryFragment : BaseFragment() {
                 .subscribe(
                     { loaded ->
                         applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
+                        if (!hasAutoSyncedThisSession) {
+                            hasAutoSyncedThisSession = true
+                            syncAndReload(SyncParams.watchLater(source = null))
+                        }
                     },
                     { error ->
                         showStatus(
@@ -618,7 +637,7 @@ class OfflineLibraryFragment : BaseFragment() {
     private fun schedulePolling() {
         pollTask?.let { pollingHandler.removeCallbacks(it) }
         pollTask = null
-        if (_binding == null || entries.none { it.isActive }) return
+        if (!isPageResumed || _binding == null || entries.none { it.isActive }) return
         val task = Runnable { pollJobStates() }
         pollTask = task
         pollingHandler.postDelayed(task, POLL_INTERVAL_MS)

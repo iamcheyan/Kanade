@@ -187,6 +187,7 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
          */
         private const val SYNC_TIMEOUT_MS = 330_000
         private const val PAGE_SIZE = 100
+        private const val HISTORY_LOOKBACK_LIMIT = 500
 
         /**
          * Job states that decide how a not-yet-downloaded row reads. A failed
@@ -423,14 +424,33 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
     /** Remove files. scope is "orphans", "watched" or "all". */
     fun clearStorage(scope: String): String = post("/api/storage/clear?scope=" + scope, "{}")
 
-    /** Resume position in seconds for one video, or 0 when never played. */
-    fun resumePosition(account: String, videoId: String): Long {
-        val json = get("/api/history?account_id=$account&limit=500")
-        for (obj in objects(json)) {
-            if (stringField(obj, "video_id") != videoId) continue
-            return longField(obj, "position_sec")
+    /**
+     * Resume positions for the requested videos, fetched in pages. Most recent
+     * history is returned first, so scanning stops as soon as every requested
+     * id is found (or the service has no more rows).
+     */
+    fun resumePositions(account: String, videoIds: Set<String>): Map<String, Long> {
+        if (videoIds.isEmpty()) return emptyMap()
+        val positions = HashMap<String, Long>(videoIds.size)
+        var offset = 0
+        while (positions.size < videoIds.size && offset < HISTORY_LOOKBACK_LIMIT) {
+            val requestLimit = minOf(PAGE_SIZE, HISTORY_LOOKBACK_LIMIT - offset)
+            val page = parseHistoryPositions(
+                get("/api/history?account_id=$account&limit=$requestLimit&offset=$offset")
+            )
+            if (page.isEmpty()) break
+            for (id in videoIds) {
+                if (id in page) positions[id] = page.getValue(id)
+            }
+            if (page.size < requestLimit) break
+            offset += PAGE_SIZE
         }
-        return 0L
+        return positions
+    }
+
+    /** Resume position in seconds for one video. */
+    fun resumePosition(account: String, videoId: String): Long {
+        return resumePositions(account, setOf(videoId))[videoId] ?: 0L
     }
 
     /** Remember how far the user got in a video. */
@@ -626,6 +646,16 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             duration = intField(obj, "duration"),
             accountId = stringField(obj, "account_id")
         )
+    }
+
+    /** Map history page entries by video ID to their last saved position. */
+    internal fun parseHistoryPositions(json: String): Map<String, Long> {
+        val positions = HashMap<String, Long>()
+        for (obj in objects(json)) {
+            val id = stringField(obj, "video_id").ifEmpty { stringField(obj, "id") }
+            if (id.isNotEmpty()) positions[id] = longField(obj, "position_sec")
+        }
+        return positions
     }
 
     /** Download jobs; progress is a whole percentage, as the service stores it. */

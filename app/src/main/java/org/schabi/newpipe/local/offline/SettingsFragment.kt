@@ -600,33 +600,26 @@ class SettingsFragment : BaseFragment() {
         syncDetails?.append(getString(labelRes, seconds, response.take(240).ifBlank { "—" }))
     }
     private fun formatSyncResponse(source: String, response: SyncResponse): String {
-        if (response.errors.isNotEmpty()) {
-            throw IllegalStateException(response.errors.joinToString("; "))
-        }
-        if (response.providerSync != "done") {
-            throw IllegalStateException(response.note.ifBlank { "provider_sync=${response.providerSync}" })
-        }
         val watchLaterCount = if (response.watchLaterItems >= 0) {
             response.watchLaterItems
         } else {
             response.syncedItems
         }
-        if (source == Sources.YOUTUBE && watchLaterCount == 0) {
-            throw IllegalStateException(
-                getString(R.string.settings_sync_no_items)
-            )
-        }
-        if (source == Sources.YOUTUBE && response.accountId != Sources.YOUTUBE) {
-            throw IllegalStateException(
-                getString(R.string.settings_sync_wrong_account, response.accountId)
-            )
+        val note = if (response.errors.isNotEmpty()) {
+            response.errors.joinToString("; ")
+        } else if (response.providerSync != "done") {
+            response.note.ifBlank { "provider_sync=${response.providerSync}" }
+        } else if (source == Sources.YOUTUBE && watchLaterCount == 0) {
+            getString(R.string.settings_sync_no_items)
+        } else {
+            response.note.ifBlank { "—" }
         }
         return getString(
             R.string.settings_sync_source_result,
             Sources.label(source), response.accountId, response.providerSync,
             response.syncedItems, watchLaterCount, response.downloadsQueued,
             response.errors.joinToString().ifBlank { "—" },
-            response.note.ifBlank { "—" }
+            note
         )
     }
 
