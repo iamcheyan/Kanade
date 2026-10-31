@@ -609,6 +609,32 @@ public final class NavigationHelper {
                 .commit();
     }
 
+    /**
+     * Opens the library of files downloaded by the companion videod service.
+     *
+     * @param fragmentManager the manager that receives the transaction
+     */
+    public static void openOfflineLibrary(final FragmentManager fragmentManager) {
+        defaultTransaction(fragmentManager)
+                .replace(R.id.fragment_holder,
+                        new org.schabi.newpipe.local.offline.OfflineLibraryFragment())
+                .addToBackStack(null)
+                .commit();
+    }
+
+    /**
+     * Opens the per-source watch-later browser (YouTube and Bilibili).
+     *
+     * @param fragmentManager the manager that receives the transaction
+     */
+    public static void openSources(final FragmentManager fragmentManager) {
+        defaultTransaction(fragmentManager)
+                .replace(R.id.fragment_holder,
+                        new org.schabi.newpipe.local.offline.SourcesFragment())
+                .addToBackStack(null)
+                .commit();
+    }
+
     public static void openSubscriptionsImportFragment(final FragmentManager fragmentManager,
                                                        final int serviceId) {
         defaultTransaction(fragmentManager)

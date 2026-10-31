@@ -40,7 +40,7 @@ configure<ApplicationExtension> {
     namespace = NEWPIPE_APPLICATION_ID_OLD
 
     defaultConfig {
-        applicationId = NEWPIPE_APPLICATION_ID_OLD
+        applicationId = JM21_APPLICATION_ID
         resValue("string", "app_name", "NewPipe")
         minSdk {
             version = release(NEWPIPE_VERSION_SDK_MIN)

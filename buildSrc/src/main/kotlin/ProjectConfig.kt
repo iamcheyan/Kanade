@@ -13,3 +13,8 @@ const val NEWPIPE_VERSION_NAME = "0.29.1"
 
 const val NEWPIPE_APPLICATION_ID_OLD = "org.schabi.newpipe"
 const val NEWPIPE_APPLICATION_ID_NEW = "net.newpipe.app"
+
+// applicationId is separate from namespace on purpose: namespace identifies
+// generated R/BuildConfig classes and must stay unique per module, while the
+// application id only decides which installed app this build replaces.
+const val JM21_APPLICATION_ID = "com.jm21.player"

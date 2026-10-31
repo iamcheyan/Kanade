@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths the offline library hands to an external player.
+
+  videod stores downloads under its own data directory, which lives outside
+  every path this app normally exposes. Only the videod download root is
+  shared, and only for read access granted per Intent.
+-->
+<paths>
+    <external-path
+        name="videod_downloads"
+        path="." />
+    <root-path
+        name="videod_root"
+        path="." />
+</paths>

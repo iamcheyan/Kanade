@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  videod runs on the loopback interface of this same device and speaks plain
+  HTTP on 127.0.0.1:8732, so loopback is exempted.
+
+  Bilibili cover images are also served over plain HTTP by its image CDN; the
+  URLs come straight from the API and cannot be upgraded to https without
+  rewriting them on the server. Only the specific image hosts are exempted, so
+  the rest of the web keeps the platform default.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">hdslb.com</domain>
+        <domain includeSubdomains="true">bilibili.com</domain>
+    </domain-config>
+</network-security-config>

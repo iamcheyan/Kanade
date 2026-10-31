@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal playback controls: a large centre play/pause and a thin progress bar
+  at the bottom. Deliberately no full-screen scrim, no skip buttons and no
+  title row, matching the plain player surface this screen aims for.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageButton
+        android:id="@+id/exo_center_play"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_gravity="center"
+        android:background="@drawable/player_center_button_bg"
+        android:contentDescription="@string/offline_play"
+        android:padding="24dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_play_arrow" />
+
+    <LinearLayout
+        android:id="@+id/exo_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/player_bottom_gradient"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/exo_position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFeatureSettings="tnum"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp" />
+
+        <org.schabi.newpipe.local.offline.ThinSeekBar
+            android:id="@+id/exo_progress"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/exo_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFeatureSettings="tnum"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp" />
+
+        <ImageButton
+            android:id="@+id/exo_fullscreen_btn"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:minWidth="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/offline_fullscreen"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_fullscreen" />
+    </LinearLayout>
+</FrameLayout>

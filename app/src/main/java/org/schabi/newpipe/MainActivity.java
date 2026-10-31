@@ -125,6 +125,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int ITEM_ID_BOOKMARKS = -3;
     private static final int ITEM_ID_DOWNLOADS = -4;
     private static final int ITEM_ID_HISTORY = -5;
+    private static final int ITEM_ID_OFFLINE_LIBRARY = -6;
+    private static final int ITEM_ID_SOURCES = -7;
     private static final int ITEM_ID_SETTINGS = 0;
     private static final int ITEM_ID_DONATION = 1;
     private static final int ITEM_ID_ABOUT = 2;
@@ -291,6 +293,13 @@ public class MainActivity extends AppCompatActivity {
         drawerLayoutBinding.navigation.getMenu()
                 .add(R.id.menu_tabs_group, ITEM_ID_HISTORY, ORDER, R.string.action_history)
                 .setIcon(R.drawable.ic_history);
+        drawerLayoutBinding.navigation.getMenu()
+                .add(R.id.menu_tabs_group, ITEM_ID_SOURCES, ORDER, R.string.sources_title)
+                .setIcon(R.drawable.ic_subscriptions);
+        drawerLayoutBinding.navigation.getMenu()
+                .add(R.id.menu_tabs_group, ITEM_ID_OFFLINE_LIBRARY, ORDER,
+                        R.string.offline_library_title)
+                .setIcon(R.drawable.ic_file_download);
 
         //Kiosks
         final int currentServiceId = ServiceHelper.getSelectedServiceId(this);
@@ -367,6 +376,12 @@ public class MainActivity extends AppCompatActivity {
                 break;
             case ITEM_ID_HISTORY:
                 NavigationHelper.openStatisticFragment(getSupportFragmentManager());
+                break;
+            case ITEM_ID_OFFLINE_LIBRARY:
+                NavigationHelper.openOfflineLibrary(getSupportFragmentManager());
+                break;
+            case ITEM_ID_SOURCES:
+                NavigationHelper.openSources(getSupportFragmentManager());
                 break;
         }
     }

@@ -38,6 +38,7 @@
         android:resizeableActivity="true"
         android:theme="@style/OpeningTheme"
         android:memtagMode="async"
+        android:networkSecurityConfig="@xml/network_security_config"
         tools:ignore="AllowBackup">
         <activity
             android:name=".MainActivity"
@@ -76,10 +77,24 @@
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService"/>
-            </intent-filter>
+            <!--
+              The MediaBrowserService filter is intentionally absent: system
+              media-resume reads it and relaunches this app when another player
+              stops, which stole focus from this build's own screens. Nothing
+              in this fork browses the player over MediaBrowser.
+            -->
         </service>
+
+        <service
+            android:name=".local.offline.OfflinePlayerService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <activity
+            android:name=".local.offline.OfflinePlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize"
+            android:exported="false"
+            android:theme="@style/DarkTheme" />
 
         <activity
             android:name=".player.PlayQueueActivity"
@@ -163,6 +178,21 @@
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/nnf_provider_paths" />
+        </provider>
+
+        <!--
+          Separate authority from ${applicationId}.provider: that one exposes
+          NewPipe's own download folders, while this one only shares files the
+          videod service downloaded.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.jm21provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/jm21_provider_paths" />
         </provider>
 
         <activity
