@@ -526,15 +526,27 @@ class OfflinePlayerActivity : AppCompatActivity() {
                             }
                         }
                         if (current != null) {
-                            OfflinePlayerService.play(
-                                this,
-                                streamUrl,
-                                current.title,
-                                Sources.label(account),
-                                current.thumbnail,
-                                current.id,
-                                account
-                            )
+                            if (OfflinePlayerService.player?.playWhenReady == true) {
+                                OfflinePlayerService.play(
+                                    this,
+                                    streamUrl,
+                                    current.title,
+                                    Sources.label(account),
+                                    current.thumbnail,
+                                    current.id,
+                                    account
+                                )
+                            } else {
+                                OfflinePlayerService.loadPaused(
+                                    this,
+                                    streamUrl,
+                                    current.title,
+                                    Sources.label(account),
+                                    current.thumbnail,
+                                    current.id,
+                                    account
+                                )
+                            }
                             applyResumePosition()
                         }
                         showSuggestions(others)

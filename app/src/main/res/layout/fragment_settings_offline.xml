@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorBackgroundFloating">
+    android:background="@color/dark_background_color">
 
     <LinearLayout
         android:id="@+id/settings_column"

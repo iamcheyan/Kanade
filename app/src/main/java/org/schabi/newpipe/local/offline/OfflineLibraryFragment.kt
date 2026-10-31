@@ -19,6 +19,7 @@ import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 import org.schabi.newpipe.BaseFragment
+import org.schabi.newpipe.MainActivity
 import org.schabi.newpipe.R
 import org.schabi.newpipe.databinding.FragmentOfflineLibraryBinding
 import org.schabi.newpipe.databinding.ItemOfflineVideoBinding
@@ -34,6 +35,24 @@ class OfflineLibraryFragment : BaseFragment() {
 
     private var _binding: FragmentOfflineLibraryBinding? = null
     private val binding get() = _binding!!
+    private val homeChromeScrollListener = object : RecyclerView.OnScrollListener() {
+        override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+            if (dy != 0) setHomeChromeHidden(dy > 0)
+        }
+    }
+
+    private fun setHomeChromeHidden(hidden: Boolean) {
+        val header = _binding?.headerContainer ?: return
+        header.animate().cancel()
+        if (!hidden) header.visibility = View.VISIBLE
+        header.animate()
+            .translationY(if (hidden) -header.height.toFloat() else 0f)
+            .alpha(if (hidden) 0f else 1f)
+            .setDuration(220)
+            .withEndAction { if (hidden) header.visibility = View.GONE }
+            .start()
+        (activity as? MainActivity)?.setHomeMiniPlayerScrollHidden(hidden)
+    }
 
     private val client = VideodClient()
     private val disposables = CompositeDisposable()
@@ -43,17 +62,19 @@ class OfflineLibraryFragment : BaseFragment() {
     private val displayedVideos = ArrayList<OfflineVideo>()
     private val progressById = HashMap<String, Long>()
 
-    private var currentAccountFilter: String? = null
+    private val selectedAccounts = linkedSetOf(Sources.BILIBILI, Sources.YOUTUBE)
     private var currentSearchQuery: String = ""
     private var currentSortMode: Int = SORT_DEFAULT
 
     companion object {
         private const val ARG_ACCOUNT = "account"
         private const val SORT_DEFAULT = 0
-        private const val SORT_DURATION_DESC = 1
-        private const val SORT_DURATION_ASC = 2
-        private const val SORT_TITLE = 3
-        private const val SORT_RESUME = 4
+        private const val SORT_UNWATCHED_FIRST = 1
+        private const val SORT_WATCHED_FIRST = 2
+        private const val SORT_DURATION_DESC = 3
+        private const val SORT_DURATION_ASC = 4
+        private const val SORT_TITLE = 5
+        private const val SORT_RESUME = 6
 
         fun newInstance(account: String?): OfflineLibraryFragment = OfflineLibraryFragment().apply {
             arguments = Bundle().apply {
@@ -74,8 +95,7 @@ class OfflineLibraryFragment : BaseFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initial filter from arguments if any
-        currentAccountFilter = arguments?.getString(ARG_ACCOUNT)
+        // Both sources are selected by default.
 
         setupInsets()
         setupHeaderActions()
@@ -84,20 +104,34 @@ class OfflineLibraryFragment : BaseFragment() {
 
         binding.offlineList.layoutManager = LinearLayoutManager(requireContext())
         binding.offlineList.adapter = adapter
+        binding.offlineList.addOnScrollListener(homeChromeScrollListener)
 
         loadLibrary()
     }
 
     override fun onDestroyView() {
+        (activity as? MainActivity)?.setHomeMiniPlayerScrollHidden(false)
+        binding.offlineList.removeOnScrollListener(homeChromeScrollListener)
+        binding.headerContainer.animate().cancel()
+        binding.headerContainer.visibility = View.VISIBLE
+        binding.headerContainer.translationY = 0f
+        binding.headerContainer.alpha = 1f
         disposables.clear()
         _binding = null
         super.onDestroyView()
     }
 
+    override fun onResume() {
+        super.onResume()
+        activity?.findViewById<View>(R.id.toolbar_layout)?.visibility = View.GONE
+        setHomeChromeHidden(false)
+    }
+
+
     private fun setupInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.headerContainer) { view, insets ->
             val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-            val baseTop = (16 * resources.displayMetrics.density).toInt()
+            val baseTop = (6 * resources.displayMetrics.density).toInt()
             view.setPadding(view.paddingLeft, top + baseTop, view.paddingRight, view.paddingBottom)
             insets
         }
@@ -142,39 +176,31 @@ class OfflineLibraryFragment : BaseFragment() {
     private fun setupTabs() {
         binding.sourceFilter.setOnClickListener { anchor ->
             val popup = PopupMenu(requireContext(), anchor)
-            popup.menu.add(0, 0, 0, getString(R.string.drawer_all))
-            popup.menu.add(0, 1, 1, getString(R.string.drawer_bilibili))
-            popup.menu.add(0, 2, 2, getString(R.string.drawer_youtube))
+            popup.menu.add(0, 1, 0, getString(R.string.drawer_bilibili)).apply {
+                isCheckable = true
+                isChecked = Sources.BILIBILI in selectedAccounts
+            }
+            popup.menu.add(0, 2, 1, getString(R.string.drawer_youtube)).apply {
+                isCheckable = true
+                isChecked = Sources.YOUTUBE in selectedAccounts
+            }
             popup.setOnMenuItemClickListener { item ->
-                selectTab(
-                    when (item.itemId) {
-                        1 -> Sources.BILIBILI
-                        2 -> Sources.YOUTUBE
-                        else -> null
-                    }
-                )
+                val account = if (item.itemId == 1) Sources.BILIBILI else Sources.YOUTUBE
+                if (account in selectedAccounts) {
+                    if (selectedAccounts.size > 1) selectedAccounts.remove(account)
+                } else {
+                    selectedAccounts.add(account)
+                }
+                updateTabsUI()
+                applyFilterAndSort()
                 true
             }
             popup.show()
         }
-        updateTabsUI()
-    }
-
-    private fun selectTab(account: String?) {
-        if (currentAccountFilter == account) return
-        currentAccountFilter = account
-        updateTabsUI()
-        applyFilterAndSort()
     }
 
     private fun updateTabsUI() {
-        binding.sourceFilter.setText(
-            when (currentAccountFilter) {
-                Sources.BILIBILI -> R.string.drawer_bilibili
-                Sources.YOUTUBE -> R.string.drawer_youtube
-                else -> R.string.drawer_all
-            }
-        )
+        binding.sourceFilter.contentDescription = getString(R.string.app_name)
     }
 
     private fun setupSearch() {
@@ -219,10 +245,12 @@ class OfflineLibraryFragment : BaseFragment() {
     private fun showSortMenu() {
         val popup = PopupMenu(requireContext(), binding.btnSort)
         popup.menu.add(0, SORT_DEFAULT, 0, getString(R.string.sort_default))
-        popup.menu.add(0, SORT_DURATION_DESC, 1, getString(R.string.sort_duration_desc))
-        popup.menu.add(0, SORT_DURATION_ASC, 2, getString(R.string.sort_duration_asc))
-        popup.menu.add(0, SORT_TITLE, 3, getString(R.string.sort_title))
-        popup.menu.add(0, SORT_RESUME, 4, getString(R.string.sort_resume))
+        popup.menu.add(0, SORT_UNWATCHED_FIRST, 1, getString(R.string.sort_unwatched_first))
+        popup.menu.add(0, SORT_WATCHED_FIRST, 2, getString(R.string.sort_watched_first))
+        popup.menu.add(0, SORT_DURATION_DESC, 3, getString(R.string.sort_duration_desc))
+        popup.menu.add(0, SORT_DURATION_ASC, 4, getString(R.string.sort_duration_asc))
+        popup.menu.add(0, SORT_TITLE, 5, getString(R.string.sort_title))
+        popup.menu.add(0, SORT_RESUME, 6, getString(R.string.sort_resume))
 
         popup.setOnMenuItemClickListener { item ->
             currentSortMode = item.itemId
@@ -270,18 +298,46 @@ class OfflineLibraryFragment : BaseFragment() {
 
     private fun applyFilterAndSort() {
         var filtered = allVideos.filter { video ->
-            val matchAccount = currentAccountFilter == null || video.accountId == currentAccountFilter
+            val matchAccount = video.accountId in selectedAccounts
             val matchQuery = currentSearchQuery.isEmpty() ||
                 video.title.contains(currentSearchQuery, ignoreCase = true)
             matchAccount && matchQuery
         }
 
         filtered = when (currentSortMode) {
-            SORT_DURATION_DESC -> filtered.sortedByDescending { it.duration }
-            SORT_DURATION_ASC -> filtered.sortedBy { it.duration }
-            SORT_TITLE -> filtered.sortedBy { it.title.lowercase() }
-            SORT_RESUME -> filtered.sortedByDescending { progressById[it.id] ?: 0L }
-            else -> filtered
+            SORT_UNWATCHED_FIRST -> {
+                filtered.sortedWith(
+                    compareBy<OfflineVideo> { it.isWatched }
+                        .thenBy { allVideos.indexOf(it) }
+                )
+            }
+
+            SORT_WATCHED_FIRST -> {
+                filtered.sortedWith(
+                    compareByDescending<OfflineVideo> { it.isWatched }
+                        .thenBy { allVideos.indexOf(it) }
+                )
+            }
+
+            SORT_DURATION_DESC -> {
+                filtered.sortedByDescending { it.duration }
+            }
+
+            SORT_DURATION_ASC -> {
+                filtered.sortedBy { it.duration }
+            }
+
+            SORT_TITLE -> {
+                filtered.sortedBy { it.title.lowercase() }
+            }
+
+            SORT_RESUME -> {
+                filtered.sortedByDescending { progressById[it.id] ?: 0L }
+            }
+
+            else -> {
+                filtered
+            }
         }
 
         displayedVideos.clear()
@@ -399,6 +455,20 @@ class OfflineLibraryFragment : BaseFragment() {
                 itemBinding.offlineItemMeta.text = buildMeta(video)
                 CoilHelper.loadThumbnail(itemBinding.offlineItemThumbnail, video.thumbnail)
 
+                val watched = video.isWatched
+                itemBinding.offlineItemWatchedBadge.visibility = if (watched) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
+                itemBinding.offlineItemWatchedDim.visibility = if (watched) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
+                itemBinding.offlineItemTitle.alpha = if (watched) 0.7f else 1.0f
+                itemBinding.offlineItemThumbnail.alpha = if (watched) 0.75f else 1.0f
+
                 itemBinding.root.setOnClickListener { play(video) }
 
                 itemBinding.offlineItemMenu.setOnClickListener {
@@ -415,7 +485,7 @@ class OfflineLibraryFragment : BaseFragment() {
                 val popup = PopupMenu(requireContext(), anchor)
                 popup.menu.add(0, 1, 0, getString(R.string.offline_play))
                 popup.menu.add(0, 2, 1, getString(R.string.offline_play_from_start))
-                if (video.remoteMissingSince.isEmpty()) {
+                if (!video.isWatched) {
                     popup.menu.add(0, 3, 2, getString(R.string.offline_mark_watched))
                 }
                 popup.menu.add(0, 4, 3, getString(R.string.offline_remove_from_library))
@@ -441,14 +511,19 @@ class OfflineLibraryFragment : BaseFragment() {
                     "youtube" -> getString(R.string.offline_source_youtube)
                     else -> video.accountId
                 }
+                val watchedTag = if (video.isWatched) {
+                    " · " + getString(R.string.offline_watched_badge)
+                } else {
+                    ""
+                }
                 val resume = progressById[video.id] ?: 0L
                 return if (resume > 0) {
                     "$length · $source · " + getString(
                         R.string.offline_resume_at,
                         formatSeconds(resume)
-                    )
+                    ) + watchedTag
                 } else {
-                    "$length · $source"
+                    "$length · $source$watchedTag"
                 }
             }
         }

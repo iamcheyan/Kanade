@@ -116,6 +116,12 @@ public class MainActivity extends AppCompatActivity {
     private ToolbarLayoutBinding toolbarLayoutBinding;
     private MiniPlayerBar miniPlayerBar;
 
+    public void setHomeMiniPlayerScrollHidden(final boolean hidden) {
+        if (miniPlayerBar != null) {
+            miniPlayerBar.setHiddenByHomeScroll(hidden);
+        }
+    }
+
     private ActionBarDrawerToggle toggle;
 
     private boolean servicesShown = false;
@@ -220,17 +226,10 @@ public class MainActivity extends AppCompatActivity {
             initFragments();
             mainBinding.fragmentHolder.post(this::updateDrawerNavigation);
         }
-        mainBinding.getRoot().post(() -> {
-            final Fragment fragment = getSupportFragmentManager()
-                    .findFragmentById(R.id.fragment_holder);
-            if (fragment instanceof org.schabi.newpipe.local.offline.OfflineLibraryFragment) {
-                toolbarLayoutBinding.getRoot().setVisibility(View.GONE);
-                mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
-            }
-        });
         updateDrawerNavigation();
         try {
             setupDrawer();
+            mainBinding.fragmentHolder.post(this::updateDrawerNavigation);
         } catch (final Exception e) {
             ErrorUtil.showUiErrorSnackbar(this, "Setting up drawer", e);
         }
@@ -836,7 +835,7 @@ public class MainActivity extends AppCompatActivity {
 
             handleIntent(getIntent());
         } else {
-            NavigationHelper.gotoMainFragment(getSupportFragmentManager());
+            NavigationHelper.openLibrary(getSupportFragmentManager(), null);
         }
     }
 
@@ -862,6 +861,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             toolbarLayoutBinding.getRoot().setVisibility(View.VISIBLE);
             mainBinding.getRoot().setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+            getSupportActionBar().setDisplayShowTitleEnabled(true);
+            if (fragment instanceof org.schabi.newpipe.local.offline.SettingsFragment) {
+                getSupportActionBar().setTitle(R.string.settings);
+            } else {
+                getSupportActionBar().setTitle("");
+            }
             getSupportActionBar().setDisplayHomeAsUpEnabled(true);
             toolbarLayoutBinding.toolbar.setNavigationOnClickListener(v -> onHomeButtonPressed());
         }

@@ -65,6 +65,7 @@ class OfflinePlayerService : Service() {
         const val ACTION_PLAY = "org.schabi.newpipe.offline.PLAY"
         const val ACTION_TOGGLE = "org.schabi.newpipe.offline.TOGGLE"
         const val ACTION_STOP = "org.schabi.newpipe.offline.STOP"
+        const val ACTION_LOAD_PAUSED = "org.schabi.newpipe.offline.LOAD_PAUSED"
         const val ACTION_RESTORE = "org.schabi.newpipe.offline.RESTORE"
 
         const val EXTRA_URL = "url"
@@ -181,6 +182,33 @@ class OfflinePlayerService : Service() {
         ) {
             val intent = Intent(context, OfflinePlayerService::class.java).apply {
                 action = ACTION_PLAY
+                putExtra(EXTRA_URL, url)
+                putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_ARTIST, artist)
+                putExtra(EXTRA_ART, art)
+                putExtra(EXTRA_ID, videoId)
+                putExtra(EXTRA_ACCOUNT, account)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        /** Load media while leaving playback paused. */
+        @JvmStatic
+        fun loadPaused(
+            context: Context,
+            url: String,
+            title: String,
+            artist: String,
+            art: String,
+            videoId: String,
+            account: String
+        ) {
+            val intent = Intent(context, OfflinePlayerService::class.java).apply {
+                action = ACTION_LOAD_PAUSED
                 putExtra(EXTRA_URL, url)
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_ARTIST, artist)
@@ -353,6 +381,26 @@ class OfflinePlayerService : Service() {
                 notifyPlaybackChanged()
             }
 
+            ACTION_LOAD_PAUSED -> {
+                val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+                currentTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+                currentArtist = intent.getStringExtra(EXTRA_ARTIST).orEmpty()
+                currentArt = intent.getStringExtra(EXTRA_ART).orEmpty()
+                currentVideoId = intent.getStringExtra(EXTRA_ID).orEmpty()
+                currentAccount = intent.getStringExtra(EXTRA_ACCOUNT).orEmpty()
+                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                prefs.edit()
+                    .putString(PREF_URL, url)
+                    .putString(PREF_TITLE, currentTitle)
+                    .putString(PREF_ARTIST, currentArtist)
+                    .putString(PREF_ART, currentArt)
+                    .putString(PREF_ID, currentVideoId)
+                    .putString(PREF_ACCOUNT, currentAccount)
+                    .apply()
+                preparePaused(url)
+                notifyPlaybackChanged()
+            }
+
             ACTION_TOGGLE -> {
                 player?.let {
                     it.playWhenReady = !it.playWhenReady
@@ -386,6 +434,25 @@ class OfflinePlayerService : Service() {
         }
     }
 
+    private fun preparePaused(url: String) {
+        if (url.isEmpty()) return
+        val exo = player ?: ensurePlayer()
+        exo.playWhenReady = false
+        exo.setMediaItem(
+            MediaItem.fromUri(url),
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getLong(PREF_POSITION, 0L)
+        )
+        exo.prepare()
+        exo.playWhenReady = false
+        promoteForeground()
+        handler.removeCallbacks(positionSaver)
+        handler.postDelayed(positionSaver, 5000)
+        exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                savePlaybackPosition()
+            }
+        })
+    }
     private fun startPlayback(url: String) {
         if (url.isEmpty()) return
         val existing = player

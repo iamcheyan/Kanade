@@ -49,10 +49,6 @@ class SourcesFragment : Fragment() {
         TabLayoutMediator(binding.sourcesTabs, binding.sourcesPager) { tab, position ->
             tab.text = Sources.label(SourceAdapter.SOURCES[position])
         }.attach()
-        binding.sourcesSyncSwitch.setOnCheckedChangeListener { v, checked ->
-            setSyncEnabled(v, checked)
-        }
-        binding.sourcesSyncSwitch.isChecked = syncEnabled(requireContext())
     }
 
     override fun onDestroyView() {
@@ -68,26 +64,11 @@ class SourcesFragment : Fragment() {
             val SOURCES = listOf(Sources.YOUTUBE, Sources.BILIBILI)
         }
     }
-
-    companion object {
-        private const val PREFS = "jm21_sources"
-        private const val KEY_SYNC = "sync_enabled"
-
-        fun syncEnabled(context: android.content.Context): Boolean = context.getSharedPreferences(PREFS, 0).getBoolean(KEY_SYNC, true)
-
-        /** Persisting here keeps the preference in one place for both pages. */
-        private fun setSyncEnabled(v: View, enabled: Boolean) {
-            v.context.getSharedPreferences(PREFS, 0).edit()
-                .putBoolean(KEY_SYNC, enabled).apply()
-        }
-    }
 }
 
 /**
  * One source's watch-later list.
  *
- * The switch decides whether a load also queues downloads. Off means the list
- * is fetched and shown, and a row only downloads when tapped.
  */
 class SourcePageFragment : Fragment() {
 
@@ -122,24 +103,20 @@ class SourcePageFragment : Fragment() {
         super.onDestroyView()
     }
 
-    /** Fetch the list, syncing first when the switch is on. */
+    /** Read one source's already-synced Watch Later list. */
     fun reload() {
         showStatus(getString(R.string.sources_loading), "")
-        val auto = SourcesFragment.syncEnabled(requireContext())
         disposables.clear()
         disposables.add(
             Single.fromCallable {
-                // A sync with auto_download=false still refreshes the list, so
-                // the switch does not hide items: it only stops the queue.
-                client.sync(account, auto)
                 val watchLater = client.watchLater(account)
                 val downloaded = client.library(account).map { it.id }.toSet()
-                Triple(watchLater, downloaded, auto)
+                watchLater to downloaded
             }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { (watchLater, downloaded, _) ->
+                    { (watchLater, downloaded) ->
                         if (watchLater.isEmpty()) {
                             showStatus(
                                 getString(R.string.sources_empty),
@@ -147,9 +124,7 @@ class SourcePageFragment : Fragment() {
                             )
                         } else {
                             hideStatus()
-                            adapter.submit(
-                                watchLater.map { Entry(it, it.id in downloaded) }
-                            )
+                            adapter.submit(watchLater.map { Entry(it, it.id in downloaded) })
                         }
                     },
                     { error ->

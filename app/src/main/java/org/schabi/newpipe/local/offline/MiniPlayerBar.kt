@@ -29,8 +29,15 @@ class MiniPlayerBar(
     private val onVisibilityChanged: (Boolean) -> Unit
 ) {
 
+    private var hiddenByHomeScroll = false
+    private var playerItemAvailable = false
     private val handler = Handler(Looper.getMainLooper())
     private val listener = OfflinePlayerService.PlaybackListener { refresh() }
+
+    fun setHiddenByHomeScroll(hidden: Boolean) {
+        hiddenByHomeScroll = hidden
+        updateVisibility()
+    }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -64,11 +71,9 @@ class MiniPlayerBar(
     }
 
     /** Show or hide the bar and keep its text and icon in sync. */
-    @SuppressLint("SetTextI18n")
     fun refresh() {
-        val visible = OfflinePlayerService.hasItem()
-        binding.root.visibility = View.VISIBLE
-        if (!visible) {
+        playerItemAvailable = OfflinePlayerService.hasItem()
+        if (!playerItemAvailable) {
             binding.miniPlayerTitle.text = activity.getString(R.string.offline_library_title)
             binding.miniPlayerMeta.text = activity.getString(R.string.offline_play)
             binding.miniPlayerPlay.isEnabled = false
@@ -78,8 +83,10 @@ class MiniPlayerBar(
             binding.miniPlayerProgress.bufferedFraction = 0f
             handler.removeCallbacks(ticker)
             onVisibilityChanged(true)
+            updateVisibility()
             return
         }
+
         binding.miniPlayerPlay.isEnabled = true
         binding.miniPlayerTitle.text = OfflinePlayerService.currentTitle
         binding.root.setOnClickListener {
@@ -95,12 +102,30 @@ class MiniPlayerBar(
             CoilHelper.loadThumbnail(binding.miniPlayerThumb, art)
         }
         updatePlayIcon()
-        updateProgress()
-        if (binding.root.visibility != View.VISIBLE) {
-            show()
-        }
         handler.removeCallbacks(ticker)
         handler.post(ticker)
+        updateVisibility()
+    }
+
+    private fun updateVisibility() {
+        val shouldShow = playerItemAvailable && !hiddenByHomeScroll
+        binding.root.animate().cancel()
+        if (shouldShow) {
+            binding.root.visibility = View.VISIBLE
+            binding.root.animate().translationY(0f).alpha(1f).setDuration(220).start()
+            binding.root.post { setContentInset(binding.root.height) }
+        } else if (binding.root.visibility == View.VISIBLE) {
+            binding.root.animate()
+                .translationY(binding.root.height.toFloat())
+                .alpha(0f)
+                .setDuration(220)
+                .withEndAction {
+                    binding.root.visibility = View.GONE
+                    onVisibilityChanged(false)
+                    setContentInset(0)
+                }
+                .start()
+        }
     }
 
     private fun updatePlayIcon() {

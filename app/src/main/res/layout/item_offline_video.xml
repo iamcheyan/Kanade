@@ -27,6 +27,30 @@
             android:layout_height="match_parent"
             android:contentDescription="@null"
             android:scaleType="centerCrop" />
+
+        <View
+            android:id="@+id/offline_item_watched_dim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#55000000"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/offline_item_watched_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:background="@drawable/bg_watched_badge"
+            android:paddingStart="5dp"
+            android:paddingTop="1.5dp"
+            android:paddingEnd="5dp"
+            android:paddingBottom="1.5dp"
+            android:text="@string/offline_watched_badge"
+            android:textColor="#38BDF8"
+            android:textSize="9.5sp"
+            android:fontFamily="sans-serif-medium"
+            android:visibility="gone" />
     </androidx.cardview.widget.CardView>
 
     <!-- Title and Metadata Column -->

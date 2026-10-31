@@ -928,6 +928,12 @@
     <string name="settings_clear_orphans">Delete orphan files</string>
     <string name="settings_clear_all">Delete all downloads</string>
     <string name="settings_clear_watched">Delete watched downloads</string>
+    <string name="settings_clear_watched_count">Delete watched downloads (%1$d files, %2$s)</string>
+    <string name="settings_clear_watched_confirm">Delete %1$d watched downloads from local storage? (%2$s will be freed)</string>
+    <string name="settings_clear_watched_none">No watched downloads to delete</string>
+    <string name="offline_watched_badge">Watched</string>
+    <string name="sort_unwatched_first">Unwatched first</string>
+    <string name="sort_watched_first">Watched first</string>
     <string name="storage_analysis_watched_summary">Already removed from YouTube / Bilibili · %1$d files · %2$s</string>
     <string name="storage_analysis_clear_watched">Delete all files marked watched</string>
     <string name="storage_analysis_clear_watched_confirm">Delete these local files? The videos remain in watch later if the source list still has them.</string>
@@ -947,6 +953,11 @@
     <string name="settings_sync_storage_done">Local storage statistics loaded.</string>
     <string name="settings_sync_youtube_done">YouTube sync completed in %1$d s. Service response: %2$s</string>
     <string name="settings_sync_bilibili_done">Bilibili sync completed in %1$d s. Service response: %2$s</string>
+    <string name="settings_sync_source_result">Requested %1$s; service account %2$s; provider %3$s; synced items %4$d; Watch Later items %5$d; queued downloads %6$d; errors: %7$s; note: %8$s</string>
+    <string name="settings_sync_items_unavailable">not reported</string>
+    <string name="settings_sync_no_items">The service returned no Watch Later items. Check its YouTube cookie file and signed-in account.</string>
+    <string name="settings_sync_source_skipped">%1$s skipped: disabled in source settings</string>
+    <string name="settings_sync_wrong_account">The service synced account “%1$s” instead of YouTube.</string>
     <string name="settings_sync_summary">All steps completed. YouTube: %1$d s; Bilibili: %2$d s; total: %3$d s. Local files: %4$d (%5$s), orphaned: %6$d (%7$s).</string>
     <string name="settings_sync_failed">Sync failed.</string>
     <string name="settings_sync_failed_detail">Failed at %1$s: %2$s</string>

@@ -1,6 +1,10 @@
 package org.schabi.newpipe.local.offline
-
 import java.net.URL
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * One completed download, as returned by videod's library endpoint.
@@ -16,7 +20,9 @@ data class OfflineVideo(
     val duration: Int,
     val accountId: String,
     val remoteMissingSince: String = ""
-)
+) {
+    val isWatched: Boolean get() = remoteMissingSince.isNotEmpty()
+}
 
 /**
  * One row of a remote watch-later list, as returned by videod's watch_later
@@ -53,6 +59,17 @@ data class StorageStats(
     val bytes: Long,
     val orphans: Int,
     val orphanBytes: Long
+)
+
+data class SyncResponse(
+    val source: String,
+    val accountId: String,
+    val providerSync: String,
+    val syncedItems: Int,
+    val watchLaterItems: Int,
+    val downloadsQueued: Int,
+    val errors: List<String>,
+    val note: String
 )
 
 /** Where a library row came from; each source has its own account. */
@@ -93,7 +110,7 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
 
     /** The source's remote watch-later list, downloaded or not. */
     fun watchLater(account: String): List<WatchLaterItem> {
-        return parseWatchLater(get("/api/watch_later?account_id=$account&limit=200"))
+        return parseWatchLater(get("/api/watch_later?account_id=$account&limit=100"))
     }
 
     /**
@@ -103,9 +120,20 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
      * download. Passing false keeps the list browsable without consuming disk,
      * which is what the sync toggle off is for.
      */
-    fun sync(account: String, autoDownload: Boolean): String {
+    fun sync(account: String, autoDownload: Boolean): SyncResponse {
         val body = """{"what":"watch_later","source":"$account","auto_download":$autoDownload}"""
-        return post("/api/sync", body)
+        val json = Json.parseToJsonElement(post("/api/sync", body)).jsonObject
+        val errors = json["errors"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+        return SyncResponse(
+            source = json["source"]?.jsonPrimitive?.content ?: account,
+            accountId = json["account_id"]?.jsonPrimitive?.content.orEmpty(),
+            providerSync = json["provider_sync"]?.jsonPrimitive?.content.orEmpty(),
+            syncedItems = json["synced_items"]?.jsonPrimitive?.intOrNull ?: -1,
+            watchLaterItems = json["watch_later"]?.jsonPrimitive?.intOrNull ?: -1,
+            downloadsQueued = json["downloads_queued"]?.jsonPrimitive?.intOrNull ?: 0,
+            errors = errors,
+            note = json["note"]?.jsonPrimitive?.content.orEmpty()
+        )
     }
 
     /** Queue one video for download. */

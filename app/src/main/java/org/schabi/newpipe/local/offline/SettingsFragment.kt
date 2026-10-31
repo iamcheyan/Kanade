@@ -55,6 +55,9 @@ class SettingsFragment : BaseFragment() {
     private var statusText: TextView? = null
     private var currentSyncStage: String = ""
     private var currentChoice: TextView? = null
+    private var clearWatchedButton: TextView? = null
+    private var lastWatchedCount: Int = 0
+    private var lastWatchedBytes: Long = 0L
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -73,7 +76,7 @@ class SettingsFragment : BaseFragment() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val density = resources.displayMetrics.density
             val top = bars.top + (56 * density).toInt()
-            val bottom = bars.bottom + (16 * density).toInt()
+            val bottom = bars.bottom + (8 * density).toInt()
             scrollView.setPadding(
                 scrollView.paddingLeft,
                 top,
@@ -93,8 +96,21 @@ class SettingsFragment : BaseFragment() {
         syncDetails = null
         statusText = null
         storageText = null
+        clearWatchedButton = null
         _binding = null
         super.onDestroyView()
+    }
+    override fun onResume() {
+        super.onResume()
+        (activity as? androidx.appcompat.app.AppCompatActivity)?.let { host ->
+            host.findViewById<View>(R.id.toolbar_layout)?.visibility = View.VISIBLE
+            host.supportActionBar?.setTitle(R.string.settings)
+            host.supportActionBar?.setDisplayHomeAsUpEnabled(false)
+            val toolbar = host.findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
+            toolbar.title = getString(R.string.settings)
+            toolbar.setNavigationIcon(R.drawable.ic_arrow_back)
+            toolbar.setNavigationOnClickListener { host.onBackPressedDispatcher.onBackPressed() }
+        }
     }
 
     // ------------------------------------------------------------------- UI
@@ -159,7 +175,28 @@ class SettingsFragment : BaseFragment() {
             column,
             getString(R.string.settings_storage_analysis)
         ) { openAnalysis() }
-        addButton(column, getString(R.string.settings_clear_watched)) { clear("watched") }
+        clearWatchedButton = addButton(column, getString(R.string.settings_clear_watched)) {
+            if (lastWatchedCount <= 0) {
+                android.widget.Toast.makeText(
+                    requireContext(),
+                    R.string.settings_clear_watched_none,
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@addButton
+            }
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle(R.string.settings_clear_watched)
+                .setMessage(
+                    getString(
+                        R.string.settings_clear_watched_confirm,
+                        lastWatchedCount,
+                        formatBytes(lastWatchedBytes)
+                    )
+                )
+                .setPositiveButton(R.string.delete) { _, _ -> clear("watched") }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
         addButton(column, getString(R.string.settings_clear_all)) { clear("all") }
 
         addSection(column, "")
@@ -325,13 +362,19 @@ class SettingsFragment : BaseFragment() {
 
     private fun reload() {
         disposables.add(
-            Single.fromCallable { client.settings() to client.storage() }
+            Single.fromCallable {
+                val settings = client.settings()
+                val storage = client.storage()
+                val breakdown = client.breakdown()
+                Triple(settings, storage, breakdown)
+            }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { (settings, storage) ->
+                    { (settings, storage, breakdown) ->
                         applySettings(settings)
                         showStorage(storage)
+                        updateWatchedStorage(breakdown)
                         statusText?.text = getString(R.string.settings_connected)
                     },
                     { error ->
@@ -339,6 +382,20 @@ class SettingsFragment : BaseFragment() {
                     }
                 )
         )
+    }
+
+    private fun updateWatchedStorage(breakdown: StorageBreakdown) {
+        lastWatchedCount = breakdown.watchedFiles
+        lastWatchedBytes = breakdown.watchedBytes
+        if (lastWatchedCount > 0) {
+            clearWatchedButton?.text = getString(
+                R.string.settings_clear_watched_count,
+                lastWatchedCount,
+                formatBytes(lastWatchedBytes)
+            )
+        } else {
+            clearWatchedButton?.text = getString(R.string.settings_clear_watched)
+        }
     }
 
     /** Set switches without firing their listeners back into the service. */
@@ -403,49 +460,83 @@ class SettingsFragment : BaseFragment() {
                     syncDetails?.text = currentSyncStage
                 }
                 val startedAt = System.nanoTime()
+                val syncSettings = client.settings()
+                val autoDownload = syncSettings["auto_download"] != "off"
+                val youtubeEnabled = syncSettings["source_youtube"] != "off"
+                val bilibiliEnabled = syncSettings["source_bilibili"] != "off"
+                val sourceCount = (if (youtubeEnabled) 1 else 0) + (if (bilibiliEnabled) 1 else 0)
                 val youtubeStarted = System.nanoTime()
-                val youtubeResult = client.sync(Sources.YOUTUBE, true)
-                val youtubeDuration = elapsedSeconds(youtubeStarted)
+                val youtubeResult = if (youtubeEnabled) {
+                    client.sync(Sources.YOUTUBE, autoDownload)
+                } else {
+                    null
+                }
+                val youtubeDuration = if (youtubeEnabled) elapsedSeconds(youtubeStarted) else 0L
                 mainHandler.post {
-                    updateSyncDetail(
-                        R.string.settings_sync_youtube_done,
-                        youtubeDuration,
-                        youtubeResult
-                    )
+                    if (youtubeResult != null) {
+                        updateSyncDetail(
+                            R.string.settings_sync_youtube_done,
+                            youtubeDuration,
+                            formatSyncResponse(Sources.YOUTUBE, youtubeResult)
+                        )
+                    } else {
+                        syncDetails?.append("\n")
+                        syncDetails?.append(getString(R.string.settings_sync_source_skipped, Sources.label(Sources.YOUTUBE)))
+                    }
                     syncProgress?.apply {
-                        max = 4
+                        max = sourceCount + 2
                         isIndeterminate = false
                         progress = 1
                     }
-                    currentSyncStage = getString(R.string.settings_sync_bilibili_running)
-                    syncDetails?.append("\n")
-                    syncDetails?.append(currentSyncStage)
+                    if (bilibiliEnabled) {
+                        currentSyncStage = getString(R.string.settings_sync_bilibili_running)
+                        syncDetails?.append("\n")
+                        syncDetails?.append(currentSyncStage)
+                    }
                 }
 
                 val bilibiliStarted = System.nanoTime()
-                val bilibiliResult = client.sync(Sources.BILIBILI, true)
-                val bilibiliDuration = elapsedSeconds(bilibiliStarted)
+                val bilibiliResult = if (bilibiliEnabled) {
+                    client.sync(Sources.BILIBILI, autoDownload)
+                } else {
+                    null
+                }
+                val bilibiliDuration = if (bilibiliEnabled) elapsedSeconds(bilibiliStarted) else 0L
                 mainHandler.post {
-                    updateSyncDetail(
-                        R.string.settings_sync_bilibili_done,
-                        bilibiliDuration,
-                        bilibiliResult
-                    )
-                    syncProgress?.progress = 2
+                    if (bilibiliResult != null) {
+                        updateSyncDetail(
+                            R.string.settings_sync_bilibili_done,
+                            bilibiliDuration,
+                            formatSyncResponse(Sources.BILIBILI, bilibiliResult)
+                        )
+                    } else {
+                        syncDetails?.append("\n")
+                        syncDetails?.append(
+                            getString(
+                                R.string.settings_sync_source_skipped,
+                                Sources.label(Sources.BILIBILI)
+                            )
+                        )
+                    }
+                    syncProgress?.apply {
+                        max = sourceCount + 2
+                        isIndeterminate = false
+                        progress = sourceCount
+                    }
                     currentSyncStage = getString(R.string.settings_sync_storage_running)
-                    syncDetails?.append("\n")
-                    syncDetails?.append(currentSyncStage)
                 }
 
                 mainHandler.post {
                     syncProgress?.apply {
                         isIndeterminate = true
-                        progress = 2
+                        progress = sourceCount
                     }
                 }
                 val storage = client.storage()
+                val breakdown = client.breakdown()
                 val result = SyncResult(
                     storage = storage,
+                    breakdown = breakdown,
                     youtubeDuration = youtubeDuration,
                     bilibiliDuration = bilibiliDuration,
                     totalDuration = elapsedSeconds(startedAt)
@@ -482,6 +573,8 @@ class SettingsFragment : BaseFragment() {
                                 formatBytes(result.storage.orphanBytes)
                             )
                         )
+                        showStorage(result.storage)
+                        updateWatchedStorage(result.breakdown)
                         currentSyncStage = getString(R.string.settings_sync_complete)
                         statusText?.text = currentSyncStage
                         finishSync()
@@ -506,6 +599,36 @@ class SettingsFragment : BaseFragment() {
         syncDetails?.append("\n")
         syncDetails?.append(getString(labelRes, seconds, response.take(240).ifBlank { "—" }))
     }
+    private fun formatSyncResponse(source: String, response: SyncResponse): String {
+        if (response.errors.isNotEmpty()) {
+            throw IllegalStateException(response.errors.joinToString("; "))
+        }
+        if (response.providerSync != "done") {
+            throw IllegalStateException(response.note.ifBlank { "provider_sync=${response.providerSync}" })
+        }
+        val watchLaterCount = if (response.watchLaterItems >= 0) {
+            response.watchLaterItems
+        } else {
+            response.syncedItems
+        }
+        if (source == Sources.YOUTUBE && watchLaterCount == 0) {
+            throw IllegalStateException(
+                getString(R.string.settings_sync_no_items)
+            )
+        }
+        if (source == Sources.YOUTUBE && response.accountId != Sources.YOUTUBE) {
+            throw IllegalStateException(
+                getString(R.string.settings_sync_wrong_account, response.accountId)
+            )
+        }
+        return getString(
+            R.string.settings_sync_source_result,
+            Sources.label(source), response.accountId, response.providerSync,
+            response.syncedItems, watchLaterCount, response.downloadsQueued,
+            response.errors.joinToString().ifBlank { "—" },
+            response.note.ifBlank { "—" }
+        )
+    }
 
     private fun finishSync() {
         syncRunning = false
@@ -517,6 +640,7 @@ class SettingsFragment : BaseFragment() {
 
     private data class SyncResult(
         val storage: StorageStats,
+        val breakdown: StorageBreakdown,
         val youtubeDuration: Long,
         val bilibiliDuration: Long,
         val totalDuration: Long
@@ -534,13 +658,16 @@ class SettingsFragment : BaseFragment() {
         disposables.add(
             Single.fromCallable {
                 client.clearStorage(scope)
-                client.storage()
+                val storage = client.storage()
+                val breakdown = client.breakdown()
+                storage to breakdown
             }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { storage ->
+                    { (storage, breakdown) ->
                         showStorage(storage)
+                        updateWatchedStorage(breakdown)
                         statusText?.text = getString(R.string.settings_cleared)
                     },
                     { error ->
