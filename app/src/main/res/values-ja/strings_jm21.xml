@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings this build adds, translated for Japanese. -->
+<resources>
+    <string name="sources_title">ソース</string>
+    <string name="sources_sync_label">自動同期とダウンロード</string>
+    <string name="sources_refresh">更新</string>
+    <string name="sources_loading">読み込み中…</string>
+    <string name="sources_empty">このリストは空です</string>
+    <string name="sources_empty_detail">ウェブで後で見るに追加してから更新してください。</string>
+    <string name="sources_unreachable">ダウンロードサービスに接続できません</string>
+    <string name="sources_download_failed">ダウンロードを開始できません</string>
+    <string name="sources_downloaded">ダウンロード済み</string>
+    <string name="sources_tap_to_download">タップしてダウンロード</string>
+
+    <string name="offline_library_title">オフラインライブラリ</string>
+    <string name="offline_library_loading">ライブラリを読み込み中…</string>
+    <string name="offline_library_empty">まだダウンロードがありません</string>
+    <string name="offline_library_empty_detail">後で見るに追加すると、端末が自動でダウンロードします。</string>
+    <string name="offline_library_unreachable">ダウンロードサービスに接続できません</string>
+    <string name="offline_library_missing_file">ファイルが見つかりません</string>
+    <string name="offline_library_redownloading">再ダウンロード中</string>
+    <string name="offline_library_no_player">このファイルを開けるプレイヤーがありません</string>
+    <string name="offline_mark_watched">視聴済みにする</string>
+    <string name="offline_remove_from_library">端末から削除</string>
+    <string name="offline_library_delete_failed">削除できませんでした</string>
+    <string name="offline_source_youtube">YouTube</string>
+    <string name="offline_source_bilibili">ビリビリ</string>
+    <string name="offline_fullscreen">全画面</string>
+    <string name="offline_downloaded_tag">ダウンロード済み</string>
+    <string name="offline_playback_channel">オフライン再生</string>
+    <string name="offline_play">再生</string>
+    <string name="offline_pause">一時停止</string>
+    <string name="offline_stop">停止</string>
+
+    <string name="drawer_all">すべて</string>
+    <string name="drawer_youtube">YouTube</string>
+    <string name="drawer_bilibili">ビリビリ</string>
+
+    <string name="settings_section_sync">同期</string>
+    <string name="settings_sync_on_wifi">Wi-Fi 接続時に同期</string>
+    <string name="settings_sync_on_wifi_summary">接続のたびにバックグラウンドで実行</string>
+    <string name="settings_auto_download">新しい動画を自動でダウンロード</string>
+    <string name="settings_auto_download_summary">オフのときはタップするまで待機します</string>
+    <string name="settings_sync_now">今すぐ同期</string>
+    <string name="settings_section_sources">ソース</string>
+    <string name="settings_source_summary">同期時にこのリストを含める</string>
+    <string name="settings_section_storage">ストレージ</string>
+    <string name="settings_storage_usage">ダウンロード済み</string>
+    <string name="settings_storage_format">%1$d ファイル、%2$s（残存 %3$d 件、%4$s）</string>
+    <string name="settings_clear_orphans">残存ファイルを削除</string>
+    <string name="settings_clear_all">すべてのダウンロードを削除</string>
+    <string name="settings_clear_watched">視聴済みの動画を削除</string>
+    <string name="settings_clear_watched_count">視聴済みの動画を削除（%1$d 件、%2$s）</string>
+    <string name="settings_clear_watched_confirm">端末内の視聴済み動画 %1$d 件を削除しますか？（%2$s 解放されます）</string>
+    <string name="settings_clear_watched_none">視聴済みの動画はありません</string>
+    <string name="offline_watched_badge">既読</string>
+    <string name="sort_unwatched_first">未視聴を優先</string>
+    <string name="sort_watched_first">視聴済みを優先</string>
+    <string name="settings_status">状態</string>
+    <string name="settings_connected">サービスに接続済み</string>
+    <string name="settings_saved">保存しました</string>
+    <string name="settings_syncing">同期中…</string>
+    <string name="settings_sync_done">同期が完了しました</string>
+    <string name="settings_cleared">ストレージを消去しました</string>
+    <string name="offline_resume_at">%1$s から再開</string>
+    <string name="settings_section_language">言語</string>
+    <string name="settings_language">アプリの言語</string>
+    <string name="settings_language_summary">タップでシステム・英語・中国語・日本語を切り替えます</string>
+    <string name="settings_storage_analysis">ストレージ分析</string>
+    <string name="settings_storage_analysis_summary">何が容量を使っているか確認</string>
+    <string name="storage_analysis_title">ストレージ分析</string>
+    <string name="storage_analysis_orphans">残存ファイル</string>
+    <string name="storage_analysis_largest">大きいファイル</string>
+    <string name="storage_analysis_other">その他</string>
+    <string name="storage_analysis_source_summary">%1$d ファイル、%2$s</string>
+    <string name="video_count_format">%1$d 本の動画</string>
+    <string name="sort_default">デフォルト順</string>
+    <string name="sort_duration_desc">再生時間の長い順</string>
+    <string name="sort_duration_asc">再生時間の短い順</string>
+    <string name="sort_title">タイトル順</string>
+    <string name="sort_resume">再生位置順</string>
+    <string name="offline_play_from_start">最初から再生</string>
+</resources>
