@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Glowing resonance waves (Left arcs) -->
+    <path
+        android:pathData="M37,34 A24,24 0 0,0 37,74"
+        android:strokeColor="#7038BDF8"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <path
+        android:pathData="M44,41 A15,15 0 0,0 44,67"
+        android:strokeColor="#B060A5FA"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <!-- Sleek modern play triangle with smooth rounded corners -->
+    <path
+        android:pathData="M52,38.5 C52,36.9 53.8,35.9 55.2,36.7 L73.5,48.2 C74.8,49.0 74.8,51.0 73.5,51.8 L55.2,63.3 C53.8,64.1 52,63.1 52,61.5 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="52"
+                android:startY="36"
+                android:endX="75"
+                android:endY="64"
+                android:type="linear"
+                android:startColor="#38BDF8"
+                android:endColor="#818CF8" />
+        </aapt:attr>
+    </path>
+
+    <!-- Glossy inner highlight on the play glyph -->
+    <path
+        android:pathData="M55,42.5 L65.5,49.5 L55,56 Z"
+        android:fillColor="#33FFFFFF" />
+</vector>
