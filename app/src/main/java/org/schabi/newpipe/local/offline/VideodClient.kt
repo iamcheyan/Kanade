@@ -37,6 +37,36 @@ data class WatchLaterItem(
     val accountId: String
 )
 
+/**
+ * One download job, as returned by videod's downloads endpoint.
+ *
+ * The endpoint has no title: it only knows the job, so rows built from it are
+ * joined with the watch-later list for their metadata.
+ */
+data class DownloadJob(
+    val id: Long,
+    val accountId: String,
+    val videoId: String,
+    val state: String,
+    val progress: Int,
+    val error: String
+) {
+    companion object {
+        const val QUEUED = "queued"
+        const val DOWNLOADING = "downloading"
+        const val PAUSED = "paused"
+        const val COMPLETED = "completed"
+        const val FAILED = "failed"
+        const val CANCELLED = "cancelled"
+
+        /** States that still make progress without user input. */
+        val RUNNING_STATES = setOf(QUEUED, DOWNLOADING, PAUSED)
+    }
+
+    /** True while the job is worth polling for. */
+    val isActive: Boolean get() = state in RUNNING_STATES
+}
+
 /** One source's share of the download directory. */
 data class SourceUsage(val account: String, val files: Int, val bytes: Long)
 
@@ -72,6 +102,56 @@ data class SyncResponse(
     val note: String
 )
 
+/**
+ * Parameters for requesting a sync operation from videod.
+ *
+ * @property source Specific source to sync (e.g. Sources.YOUTUBE, Sources.BILIBILI), or null to sync all active sources.
+ * @property what Sync scope: "watch_later", "subscriptions", "playlists", "all", or "channel". Defaults to "watch_later".
+ * @property channelId Optional channel ID if syncing a specific channel.
+ * @property autoDownload Whether newly discovered items should be automatically queued for download.
+ */
+data class SyncParams(
+    val source: String? = null,
+    val what: String = SCOPE_WATCH_LATER,
+    val channelId: String? = null,
+    val autoDownload: Boolean = false
+) {
+    companion object {
+        const val SCOPE_WATCH_LATER = "watch_later"
+        const val SCOPE_SUBSCRIPTIONS = "subscriptions"
+        const val SCOPE_PLAYLISTS = "playlists"
+        const val SCOPE_ALL = "all"
+        const val SCOPE_CHANNEL = "channel"
+
+        fun watchLater(source: String? = null, autoDownload: Boolean = false): SyncParams = SyncParams(source = source, what = SCOPE_WATCH_LATER, autoDownload = autoDownload)
+
+        fun all(source: String? = null, autoDownload: Boolean = false): SyncParams = SyncParams(source = source, what = SCOPE_ALL, autoDownload = autoDownload)
+
+        fun channel(channelId: String, source: String? = null, autoDownload: Boolean = false): SyncParams = SyncParams(source = source, what = SCOPE_CHANNEL, channelId = channelId, autoDownload = autoDownload)
+    }
+}
+
+/**
+ * Result of syncing one or multiple sources.
+ */
+data class SyncResult(
+    val responses: List<SyncResponse>,
+    val errors: List<String> = emptyList()
+) {
+    val isSuccess: Boolean get() = errors.isEmpty()
+    val hasItems: Boolean get() = responses.any { it.syncedItems > 0 }
+    val totalSynced: Int get() = responses.sumOf { if (it.syncedItems > 0) it.syncedItems else 0 }
+    val totalDownloadsQueued: Int get() = responses.sumOf { it.downloadsQueued }
+
+    fun summaryMessage(): String {
+        return if (errors.isEmpty()) {
+            "Synced $totalSynced items"
+        } else {
+            errors.joinToString("; ")
+        }
+    }
+}
+
 /** Where a library row came from; each source has its own account. */
 object Sources {
     const val YOUTUBE = "youtube"
@@ -98,6 +178,32 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
         const val DEFAULT_BASE_URL = "http://127.0.0.1:8732"
 
         private const val TIMEOUT_MS = 30_000
+
+        /**
+         * Provider sync runs yt-dlp on the device and the service allows it five
+         * minutes; a shorter read timeout would abort the request on the client
+         * side while the service keeps working, and its context cancellation
+         * then throws the fetched list away.
+         */
+        private const val SYNC_TIMEOUT_MS = 330_000
+        private const val PAGE_SIZE = 100
+
+        /**
+         * Job states that decide how a not-yet-downloaded row reads. A failed
+         * job keeps its row retryable; cancelled jobs are queried too so a row
+         * does not linger on a state the service already dropped.
+         */
+        private val JOB_STATES = listOf(
+            DownloadJob.QUEUED,
+            DownloadJob.DOWNLOADING,
+            DownloadJob.PAUSED,
+            DownloadJob.FAILED,
+            DownloadJob.CANCELLED
+        )
+        private val ACTIVE_JOB_STATES = listOf(
+            DownloadJob.QUEUED,
+            DownloadJob.DOWNLOADING
+        )
     }
 
     /** Downloaded files for one source. */
@@ -108,24 +214,163 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
     /** Downloaded files from every source, merged. */
     fun libraryAll(): List<OfflineVideo> = parseLibrary(get("/api/library"))
 
-    /** The source's remote watch-later list, downloaded or not. */
-    fun watchLater(account: String): List<WatchLaterItem> {
-        return parseWatchLater(get("/api/watch_later?account_id=$account&limit=100"))
+    /**
+     * The user setting shared with the service's post-sync auto-queue policy.
+     * Missing/unknown values retain the backend default (on).
+     */
+    fun autoDownloadEnabled(): Boolean = settings()["auto_download"]?.let {
+        it != "off" && it != "false" && it != "0"
+    } ?: true
+
+    /**
+     * Download jobs for one source that still describe a row.
+     *
+     * The listing is paged by creation order, and a long-lived device holds far
+     * more finished jobs than one page, so asking for everything would return
+     * the oldest page and miss the job a user just started. Each state that can
+     * affect a row is queried on its own instead; `completed` is not, because a
+     * finished download shows up in the library endpoint.
+     */
+    fun downloads(account: String): List<DownloadJob> = downloadJobs(account, JOB_STATES)
+
+    /** Active states for lightweight polling; finished failures are loaded once. */
+    fun activeDownloads(account: String): List<DownloadJob> = downloadJobs(account, ACTIVE_JOB_STATES)
+
+    private fun downloadJobs(account: String, states: List<String>): List<DownloadJob> {
+        val jobs = ArrayList<DownloadJob>()
+        for (state in states) {
+            var offset = 0
+            while (true) {
+                val page = try {
+                    parseDownloads(
+                        get("/api/downloads?account_id=$account&state=$state&limit=$PAGE_SIZE&offset=$offset")
+                    )
+                } catch (e: IllegalStateException) {
+                    // Ignore older videod builds that do not support a state.
+                    break
+                }
+                jobs.addAll(page)
+                if (page.size < PAGE_SIZE) break
+                offset += PAGE_SIZE
+            }
+        }
+        return jobs
     }
 
     /**
-     * Pull the remote list into the local database.
+     * Queue several videos in one request.
      *
-     * [autoDownload] decides whether newly seen videos are queued for
-     * download. Passing false keeps the list browsable without consuming disk,
-     * which is what the sync toggle off is for.
+     * The service rejects a batch that queued nothing, which happens when every
+     * id already has a job; that is not an error worth surfacing.
+     */
+    fun queueDownloads(account: String, videoIds: List<String>): Int {
+        if (videoIds.isEmpty()) return 0
+        val batch = videoIds.joinToString(",", "[", "]") { "\"" + it.replace("\"", "\\\"") + "\"" }
+        val body = "{\"video_ids\":$batch,\"mode\":\"video\"}"
+        return try {
+            val json = Json.parseToJsonElement(post("/api/downloads?account_id=$account", body)).jsonObject
+            json["queued"]?.jsonPrimitive?.intOrNull ?: 0
+        } catch (e: IllegalStateException) {
+            // HTTP 400 batch_rejected: nothing left to queue.
+            if (e.message?.contains("batch_rejected") == true) 0 else throw e
+        }
+    }
+
+    /** Resume a paused service job. */
+    fun resumeDownload(account: String, id: Long): String {
+        return post("/api/downloads/$id?account_id=$account", "{\"action\":\"resume\"}")
+    }
+
+    /** The source's remote watch-later list, downloaded or not. */
+    fun watchLater(account: String): List<WatchLaterItem> {
+        val items = ArrayList<WatchLaterItem>()
+        var offset = 0
+        while (true) {
+            val page = parseWatchLater(
+                get("/api/watch_later?account_id=$account&limit=$PAGE_SIZE&offset=$offset")
+            )
+            items.addAll(page)
+            if (page.size < PAGE_SIZE) break
+            offset += PAGE_SIZE
+        }
+        return items
+    }
+
+    /**
+     * Pull remote lists or channel data into the local database according to [params].
+     * When [SyncParams.source] is null, syncs all supported sources and aggregates results.
+     */
+    fun sync(params: SyncParams): SyncResult {
+        val sources = if (params.source != null) {
+            listOf(params.source)
+        } else {
+            listOf(Sources.YOUTUBE, Sources.BILIBILI)
+        }
+
+        val responses = mutableListOf<SyncResponse>()
+        val errors = mutableListOf<String>()
+
+        for (source in sources) {
+            try {
+                // Note: Bilibili only supports watch_later. If all/subscriptions/playlists is requested, adjust scope for bilibili.
+                val effectiveWhat = if (source == Sources.BILIBILI &&
+                    (
+                        params.what == SyncParams.SCOPE_ALL ||
+                            params.what == SyncParams.SCOPE_SUBSCRIPTIONS ||
+                            params.what == SyncParams.SCOPE_PLAYLISTS
+                        )
+                ) {
+                    SyncParams.SCOPE_WATCH_LATER
+                } else {
+                    params.what
+                }
+
+                val resp = executeSync(
+                    source = source,
+                    what = effectiveWhat,
+                    autoDownload = params.autoDownload,
+                    channelId = params.channelId
+                )
+                responses.add(resp)
+                if (resp.errors.isNotEmpty()) {
+                    errors.addAll(resp.errors.map { "${Sources.label(source)}: $it" })
+                }
+            } catch (e: Exception) {
+                errors.add("${Sources.label(source)}: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+
+        return SyncResult(responses, errors)
+    }
+
+    /**
+     * Legacy single-source sync compatibility.
      */
     fun sync(account: String, autoDownload: Boolean): SyncResponse {
-        val body = """{"what":"watch_later","source":"$account","auto_download":$autoDownload}"""
-        val json = Json.parseToJsonElement(post("/api/sync", body)).jsonObject
+        return executeSync(account, SyncParams.SCOPE_WATCH_LATER, autoDownload, null)
+    }
+
+    private fun executeSync(
+        source: String,
+        what: String,
+        autoDownload: Boolean,
+        channelId: String?
+    ): SyncResponse {
+        val sb = StringBuilder()
+        sb.append("{\"what\":\"").append(what).append("\"")
+        sb.append(",\"source\":\"").append(source).append("\"")
+        sb.append(",\"auto_download\":").append(autoDownload)
+        if (!channelId.isNullOrBlank()) {
+            sb.append(",\"channel_id\":\"").append(channelId).append("\"")
+        }
+        sb.append("}")
+
+        val json = Json.parseToJsonElement(
+            post("/api/sync", sb.toString(), SYNC_TIMEOUT_MS)
+        ).jsonObject
         val errors = json["errors"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
         return SyncResponse(
-            source = json["source"]?.jsonPrimitive?.content ?: account,
+            source = json["source"]?.jsonPrimitive?.content ?: source,
             accountId = json["account_id"]?.jsonPrimitive?.content.orEmpty(),
             providerSync = json["provider_sync"]?.jsonPrimitive?.content.orEmpty(),
             syncedItems = json["synced_items"]?.jsonPrimitive?.intOrNull ?: -1,
@@ -224,12 +469,14 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
         return connection.inputStream.bufferedReader().use { it.readText() }
     }
 
-    private fun post(path: String, body: String): String {
+    private fun post(path: String, body: String): String = post(path, body, TIMEOUT_MS)
+
+    private fun post(path: String, body: String, readTimeoutMs: Int): String {
         val connection = URL(baseUrl + path).openConnection() as java.net.HttpURLConnection
         connection.requestMethod = "POST"
         connection.doOutput = true
         connection.connectTimeout = 10_000
-        connection.readTimeout = TIMEOUT_MS
+        connection.readTimeout = readTimeoutMs
         connection.setRequestProperty("Content-Type", "application/json")
         connection.outputStream.use { it.write(body.toByteArray()) }
         val responseCode = connection.responseCode
@@ -378,6 +625,18 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             thumbnail = stringField(obj, "thumbnail"),
             duration = intField(obj, "duration"),
             accountId = stringField(obj, "account_id")
+        )
+    }
+
+    /** Download jobs; progress is a whole percentage, as the service stores it. */
+    internal fun parseDownloads(json: String): List<DownloadJob> = objects(json).map { obj ->
+        DownloadJob(
+            id = longField(obj, "id"),
+            accountId = stringField(obj, "account_id"),
+            videoId = stringField(obj, "video_id"),
+            state = stringField(obj, "state"),
+            progress = intField(obj, "progress"),
+            error = stringField(obj, "error")
         )
     }
 

@@ -82,6 +82,17 @@
             android:maxLines="1"
             android:textColor="#8A8F9D"
             android:textSize="12sp" />
+
+        <ProgressBar
+            android:id="@+id/offline_item_progress"
+            style="?android:progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:layout_marginTop="6dp"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/bg_download_progress"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- 3-Dots Menu (Gramophone Style) -->

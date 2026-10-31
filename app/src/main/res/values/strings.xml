@@ -932,6 +932,11 @@
     <string name="settings_clear_watched_confirm">Delete %1$d watched downloads from local storage? (%2$s will be freed)</string>
     <string name="settings_clear_watched_none">No watched downloads to delete</string>
     <string name="offline_watched_badge">Watched</string>
+    <string name="offline_watched_tab">Watched</string>
+    <string name="offline_clear_watched">Delete all watched downloads</string>
+    <string name="offline_clear_watched_confirm">Delete all watched videos and their local files?</string>
+    <string name="offline_watched_empty">No watched downloads</string>
+    <string name="offline_sync_failed">Sync failed</string>
     <string name="sort_unwatched_first">Unwatched first</string>
     <string name="sort_watched_first">Watched first</string>
     <string name="storage_analysis_watched_summary">Already removed from YouTube / Bilibili · %1$d files · %2$s</string>
@@ -976,6 +981,11 @@
     <string name="offline_library_unreachable">Cannot reach the download service</string>
     <string name="offline_library_missing_file">The file is gone</string>
     <string name="offline_library_redownloading">Re-downloading</string>
+    <string name="offline_download_now">Download now</string>
+    <string name="offline_download_queued">Waiting to download…</string>
+    <string name="offline_downloading">Downloading %1$d%%</string>
+    <string name="offline_download_failed">Download failed · tap to retry</string>
+    <string name="offline_download_resume">Resume download</string>
     <string name="offline_library_no_player">No player could open this file</string>
     <string name="offline_library_mark_failed">Could not mark as watched</string>
     <string name="offline_source_youtube">YouTube</string>

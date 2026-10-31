@@ -80,4 +80,14 @@
     <string name="sort_title">タイトル順</string>
     <string name="sort_resume">再生位置順</string>
     <string name="offline_play_from_start">最初から再生</string>
+    <string name="offline_sync_failed">同期できませんでした</string>
+    <string name="offline_watched_tab">視聴済み</string>
+    <string name="offline_clear_watched">すべての視聴済み動画を削除</string>
+    <string name="offline_clear_watched_confirm">すべての視聴済み動画とローカルファイルを削除しますか？</string>
+    <string name="offline_watched_empty">視聴済みの動画はありません</string>
+    <string name="offline_download_now">今すぐダウンロード</string>
+    <string name="offline_download_queued">ダウンロード待ち…</string>
+    <string name="offline_downloading">ダウンロード中 %1$d%%</string>
+    <string name="offline_download_failed">ダウンロード失敗 · タップで再試行</string>
+    <string name="offline_download_resume">ダウンロードを再開</string>
 </resources>

@@ -96,4 +96,14 @@
     <string name="sort_title">按名称排序</string>
     <string name="sort_resume">按播放进度</string>
     <string name="offline_play_from_start">从头播放</string>
+    <string name="offline_sync_failed">同步失败</string>
+    <string name="offline_watched_tab">已看</string>
+    <string name="offline_clear_watched">删除所有已看视频</string>
+    <string name="offline_clear_watched_confirm">确定要删除所有已看视频及其本地文件吗？</string>
+    <string name="offline_watched_empty">暂无已看视频</string>
+    <string name="offline_download_now">立即下载</string>
+    <string name="offline_download_queued">等待下载…</string>
+    <string name="offline_downloading">正在下载 %1$d%%</string>
+    <string name="offline_download_failed">下载失败 · 点击重试</string>
+    <string name="offline_download_resume">恢复下载</string>
 </resources>
