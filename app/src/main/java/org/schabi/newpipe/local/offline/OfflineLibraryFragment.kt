@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.widget.TextView
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
@@ -62,7 +63,7 @@ class OfflineLibraryFragment : BaseFragment() {
     private val displayedVideos = ArrayList<OfflineVideo>()
     private val progressById = HashMap<String, Long>()
 
-    private val selectedAccounts = linkedSetOf(Sources.BILIBILI, Sources.YOUTUBE)
+    private var currentAccountFilter: String? = null
     private var currentSearchQuery: String = ""
     private var currentSortMode: Int = SORT_DEFAULT
 
@@ -127,18 +128,6 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun setupInsets() {
-        var topHeaderPadding = (72 * resources.displayMetrics.density).toInt()
-        var bottomNavPadding = (96 * resources.displayMetrics.density).toInt()
-
-        fun applyListPadding() {
-            binding.offlineList.setPadding(
-                binding.offlineList.paddingLeft,
-                topHeaderPadding,
-                binding.offlineList.paddingRight,
-                bottomNavPadding
-            )
-        }
-
         ViewCompat.setOnApplyWindowInsetsListener(binding.headerContainer) { view, insets ->
             val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val baseTop = (6 * resources.displayMetrics.density).toInt()
@@ -146,18 +135,15 @@ class OfflineLibraryFragment : BaseFragment() {
             insets
         }
 
-        binding.headerContainer.addOnLayoutChangeListener { header, _, _, _, _, _, _, _, _ ->
-            if (header.height > 0) {
-                topHeaderPadding = header.height + (4 * resources.displayMetrics.density).toInt()
-                applyListPadding()
-            }
-        }
-
-        ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { _, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { list, insets ->
             val bottomInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             val baseBottom = (96 * resources.displayMetrics.density).toInt()
-            bottomNavPadding = baseBottom + bottomInset
-            applyListPadding()
+            list.setPadding(
+                list.paddingLeft,
+                list.paddingTop,
+                list.paddingRight,
+                baseBottom + bottomInset
+            )
             WindowInsetsCompat.CONSUMED
         }
     }
@@ -173,33 +159,41 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun setupTabs() {
-        binding.sourceFilter.setOnClickListener { anchor ->
-            val popup = PopupMenu(requireContext(), anchor)
-            popup.menu.add(0, 1, 0, getString(R.string.drawer_bilibili)).apply {
-                isCheckable = true
-                isChecked = Sources.BILIBILI in selectedAccounts
-            }
-            popup.menu.add(0, 2, 1, getString(R.string.drawer_youtube)).apply {
-                isCheckable = true
-                isChecked = Sources.YOUTUBE in selectedAccounts
-            }
-            popup.setOnMenuItemClickListener { item ->
-                val account = if (item.itemId == 1) Sources.BILIBILI else Sources.YOUTUBE
-                if (account in selectedAccounts) {
-                    if (selectedAccounts.size > 1) selectedAccounts.remove(account)
-                } else {
-                    selectedAccounts.add(account)
-                }
-                updateTabsUI()
-                applyFilterAndSort()
-                true
-            }
-            popup.show()
-        }
+        binding.tabAll.setOnClickListener { selectTab(null) }
+        binding.tabBilibili.setOnClickListener { selectTab(Sources.BILIBILI) }
+        binding.tabYoutube.setOnClickListener { selectTab(Sources.YOUTUBE) }
+        updateTabsUI()
+    }
+
+    private fun selectTab(account: String?) {
+        if (currentAccountFilter == account) return
+        currentAccountFilter = account
+        updateTabsUI()
+        applyFilterAndSort()
     }
 
     private fun updateTabsUI() {
-        binding.sourceFilter.contentDescription = getString(R.string.app_name)
+        val selectedTab = currentAccountFilter
+
+        fun setPill(tv: TextView, isSelected: Boolean) {
+            tv.setBackgroundResource(
+                if (isSelected) {
+                    R.drawable.bg_tab_pill_selected
+                } else {
+                    R.drawable.bg_tab_pill_unselected
+                }
+            )
+            tv.setTextColor(if (isSelected) 0xFF0D0F14.toInt() else 0xFF9DA3B4.toInt())
+            tv.typeface = if (isSelected) {
+                android.graphics.Typeface.DEFAULT_BOLD
+            } else {
+                android.graphics.Typeface.DEFAULT
+            }
+        }
+
+        setPill(binding.tabAll, selectedTab == null)
+        setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI)
+        setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE)
     }
 
     private fun setupSearch() {
@@ -297,7 +291,7 @@ class OfflineLibraryFragment : BaseFragment() {
 
     private fun applyFilterAndSort() {
         var filtered = allVideos.filter { video ->
-            val matchAccount = video.accountId in selectedAccounts
+            val matchAccount = currentAccountFilter == null || video.accountId == currentAccountFilter
             val matchQuery = currentSearchQuery.isEmpty() ||
                 video.title.contains(currentSearchQuery, ignoreCase = true)
             matchAccount && matchQuery
