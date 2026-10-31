@@ -1998,10 +1998,15 @@ public final class VideoDetailFragment
             activity.getWindow().getAttributes().layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
         }
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(
+                activity.getWindow(), false);
         activity.getWindow().getDecorView().setSystemUiVisibility(0);
         activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        activity.getWindow().setStatusBarColor(ThemeHelper.resolveColorFromAttr(
-                requireContext(), android.R.attr.colorPrimary));
+        activity.getWindow().setStatusBarColor(Color.TRANSPARENT);
+        activity.getWindow().setNavigationBarColor(Color.rgb(13, 15, 20));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            activity.getWindow().setNavigationBarContrastEnforced(false);
+        }
     }
 
     private void hideSystemUi() {
@@ -2034,7 +2039,7 @@ public final class VideoDetailFragment
 
         if (isInMultiWindow || isFullscreen()) {
             activity.getWindow().setStatusBarColor(Color.TRANSPARENT);
-            activity.getWindow().setNavigationBarColor(Color.TRANSPARENT);
+            activity.getWindow().setNavigationBarColor(Color.rgb(13, 15, 20));
         }
         activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
