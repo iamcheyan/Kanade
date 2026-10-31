@@ -18,9 +18,11 @@ import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
+import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
+import com.google.android.exoplayer2.audio.AudioAttributes
 import java.util.concurrent.CopyOnWriteArraySet
 import org.schabi.newpipe.R
 
@@ -62,6 +64,13 @@ class OfflinePlayerService : Service() {
         private const val PREF_ACCOUNT = "account"
         private const val PREF_POSITION = "position"
 
+        /**
+         * How long a paused player is kept for instant resume: long enough that
+         * a short pause does not rebuild it, short enough that an idle audio
+         * session stops costing power.
+         */
+        private const val IDLE_RELEASE_DELAY_MS = 30_000L
+
         const val ACTION_PLAY = "org.schabi.newpipe.offline.PLAY"
         const val ACTION_TOGGLE = "org.schabi.newpipe.offline.TOGGLE"
         const val ACTION_STOP = "org.schabi.newpipe.offline.STOP"
@@ -99,6 +108,13 @@ class OfflinePlayerService : Service() {
         @Volatile
         private var currentAccount: String = ""
 
+        /**
+         * Whether the user last asked for playback. Kept across an idle
+         * release so reopening the screen resumes instead of loading paused.
+         */
+        @Volatile
+        private var wantsPlayback: Boolean = false
+
         private val stateListeners = CopyOnWriteArraySet<PlaybackListener>()
         private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -109,10 +125,14 @@ class OfflinePlayerService : Service() {
          * left in the background": the item is still loaded and can resume.
          */
         @JvmStatic
-        fun hasItem(): Boolean = player?.currentMediaItem != null && currentVideoId.isNotEmpty()
+        fun hasItem(): Boolean = currentVideoId.isNotEmpty()
 
         @JvmStatic
         fun isPlaying(): Boolean = player?.isPlaying == true
+
+        /** True when the user last asked for playback, even if idle-released. */
+        @JvmStatic
+        fun wantsPlayback(): Boolean = wantsPlayback
 
         @JvmStatic
         fun artUrl(): String = currentArt
@@ -131,10 +151,14 @@ class OfflinePlayerService : Service() {
             context.startService(intent)
         }
 
-        /** Flip play/pause; same process, so no service round trip needed. */
+        /** Flip play/pause, rebuilding a released player from prefs. */
         @JvmStatic
-        fun toggle() {
-            val exo = player ?: return
+        fun toggle(context: Context) {
+            val exo = player
+            if (exo == null) {
+                restore(context)
+                return
+            }
             exo.playWhenReady = !exo.playWhenReady
             notifyPlaybackChanged()
         }
@@ -257,6 +281,20 @@ class OfflinePlayerService : Service() {
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
         val exo = ExoPlayer.Builder(this).build()
+        // Music content type matters on this device: the FiiO audio HAL keys
+        // its power rail off the stream's usage/content pair. Without it the
+        // track is reported as CONTENT_TYPE_UNKNOWN and the vendor chain treats
+        // it as a generic sound. `true` lets ExoPlayer hold and release audio
+        // focus itself, which also ducks/pauses correctly on interruptions.
+        exo.setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build(),
+            true
+        )
+        // Offline playback needs no network wake lock.
+        exo.setWakeMode(C.WAKE_MODE_LOCAL)
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 updateNotification()
@@ -266,6 +304,7 @@ class OfflinePlayerService : Service() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateNotification()
                 notifyPlaybackChanged()
+                if (isPlaying) cancelRelease() else scheduleRelease()
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -277,6 +316,34 @@ class OfflinePlayerService : Service() {
     }
 
     /**
+     * Release the player once playback has been idle for a while.
+     *
+     * The service is sticky and the mini player outlives the detail screen, so
+     * the player cannot be torn down on pause. Keeping it costs a codec and an
+     * audio session, and this device's HAL keeps the DAC rail powered while a
+     * session exists. The item, position and notification survive in prefs, so
+     * resuming rebuilds the player from there.
+     */
+    private fun scheduleRelease() {
+        handler.removeCallbacks(releasePlayer)
+        handler.postDelayed(releasePlayer, IDLE_RELEASE_DELAY_MS)
+    }
+
+    private fun cancelRelease() {
+        handler.removeCallbacks(releasePlayer)
+    }
+
+    private val releasePlayer = Runnable {
+        val exo = player ?: return@Runnable
+        if (exo.isPlaying || exo.playWhenReady) return@Runnable
+        savePlaybackPosition()
+        handler.removeCallbacks(positionSaver)
+        exo.release()
+        player = null
+        notifyPlaybackChanged()
+    }
+
+    /**
      * A MediaSession is what lets the lock screen, Bluetooth buttons and the
      * quick-settings player control this playback. The notification alone
      * shows the item but is not reachable by media keys.
@@ -285,12 +352,14 @@ class OfflinePlayerService : Service() {
         val session = MediaSessionCompat(this, "jm21-offline")
         session.setCallback(object : MediaSessionCompat.Callback() {
             override fun onPlay() {
+                wantsPlayback = true
                 player?.playWhenReady = true
                 updateNotification()
                 notifyPlaybackChanged()
             }
 
             override fun onPause() {
+                wantsPlayback = false
                 player?.playWhenReady = false
                 updateNotification()
                 notifyPlaybackChanged()
@@ -402,14 +471,15 @@ class OfflinePlayerService : Service() {
             }
 
             ACTION_TOGGLE -> {
-                player?.let {
-                    it.playWhenReady = !it.playWhenReady
-                    updateNotification()
-                    notifyPlaybackChanged()
-                }
+                val exo = player ?: ensurePlayer()
+                wantsPlayback = !exo.playWhenReady
+                exo.playWhenReady = wantsPlayback
+                updateNotification()
+                notifyPlaybackChanged()
             }
 
             ACTION_STOP -> {
+                wantsPlayback = false
                 savePlaybackPosition()
                 player?.stop()
                 return START_STICKY
@@ -437,6 +507,7 @@ class OfflinePlayerService : Service() {
     private fun preparePaused(url: String) {
         if (url.isEmpty()) return
         val exo = player ?: ensurePlayer()
+        wantsPlayback = false
         exo.playWhenReady = false
         exo.setMediaItem(
             MediaItem.fromUri(url),
@@ -457,6 +528,7 @@ class OfflinePlayerService : Service() {
         if (url.isEmpty()) return
         val existing = player
         if (existing != null && existing.currentMediaItem?.localConfiguration?.uri.toString() == url) {
+            wantsPlayback = true
             existing.playWhenReady = true
             promoteForeground()
             notifyPlaybackChanged()
@@ -468,6 +540,7 @@ class OfflinePlayerService : Service() {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getLong(PREF_POSITION, 0L)
         )
         exo.prepare()
+        wantsPlayback = true
         exo.playWhenReady = true
         promoteForeground()
         handler.removeCallbacks(positionSaver)

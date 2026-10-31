@@ -49,7 +49,7 @@ class MiniPlayerBar(
     init {
         binding.miniPlayerRow.setOnClickListener { expand() }
         binding.miniPlayerPlay.setOnClickListener {
-            OfflinePlayerService.toggle()
+            OfflinePlayerService.toggle(activity)
         }
         binding.miniPlayerProgress.onSeek = seek@{ fraction ->
             val exo = OfflinePlayerService.player ?: return@seek

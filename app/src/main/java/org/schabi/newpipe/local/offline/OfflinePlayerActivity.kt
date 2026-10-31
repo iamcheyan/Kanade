@@ -526,7 +526,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
                             }
                         }
                         if (current != null) {
-                            if (OfflinePlayerService.player?.playWhenReady == true) {
+                            if (OfflinePlayerService.wantsPlayback()) {
                                 OfflinePlayerService.play(
                                     this,
                                     streamUrl,
