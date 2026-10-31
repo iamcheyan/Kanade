@@ -2,6 +2,9 @@
 package org.schabi.newpipe.local.offline
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -77,6 +80,10 @@ class OfflineLibraryFragment : BaseFragment() {
     private val pollingHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pollTask: Runnable? = null
     private var isPageResumed = false
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val connectivityManager get() = requireContext()
+        .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     private var currentAccountFilter: String? = null
     private var showWatchedOnly = false
@@ -124,6 +131,7 @@ class OfflineLibraryFragment : BaseFragment() {
         (activity as? MainActivity)?.setHomeMiniPlayerScrollHidden(false)
         binding.appBarLayout.setExpanded(true, false)
         isPageResumed = true
+        updateRefreshAvailability()
         schedulePolling()
     }
 
@@ -153,12 +161,30 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.offlineSwipeRefresh.setProgressBackgroundColorSchemeColor(0xFF1E222D.toInt())
         binding.offlineSwipeRefresh.setColorSchemeColors(0xFFF1F3F7.toInt(), 0xFF4A80FF.toInt())
         binding.offlineSwipeRefresh.setOnRefreshListener {
+            if (!canSyncNow()) {
+                binding.offlineSwipeRefresh.isRefreshing = false
+                showWifiRequired()
+                return@setOnRefreshListener
+            }
             syncAndReload(SyncParams.watchLater(source = currentAccountFilter))
         }
+        updateRefreshAvailability()
 
         binding.appBarLayout.addOnOffsetChangedListener { _, verticalOffset ->
-            binding.offlineSwipeRefresh.isEnabled = (verticalOffset == 0)
+            binding.offlineSwipeRefresh.isEnabled = verticalOffset == 0 && canSyncNow()
         }
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                onNetworkChanged()
+            }
+
+            override fun onLost(network: Network) {
+                onNetworkChanged()
+            }
+        }
+        networkCallback = callback
+        connectivityManager.registerDefaultNetworkCallback(callback)
 
         loadLibrary()
     }
@@ -170,9 +196,50 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.offlineList.removeOnScrollListener(homeChromeScrollListener)
         pollTask?.let { pollingHandler.removeCallbacks(it) }
         pollTask = null
+        networkCallback?.let {
+            runCatching { connectivityManager.unregisterNetworkCallback(it) }
+        }
+        networkCallback = null
         disposables.clear()
         _binding = null
         super.onDestroyView()
+    }
+
+    /**
+     * Pull-to-refresh syncs the source list and queues downloads, so it only
+     * runs on Wi-Fi. On mobile data the gesture is disabled rather than quietly
+     * spending the user's allowance.
+     */
+    private fun isOnWifi(): Boolean {
+        val capabilities = connectivityManager.getNetworkCapabilities(
+            connectivityManager.activeNetwork
+        ) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    private fun canSyncNow(): Boolean = isOnWifi()
+
+    private fun updateRefreshAvailability() {
+        if (_binding == null) return
+        binding.offlineSwipeRefresh.isEnabled = canSyncNow()
+        if (!canSyncNow()) binding.offlineSwipeRefresh.isRefreshing = false
+    }
+
+    private fun onNetworkChanged() {
+        if (_binding == null || !isAdded) return
+        activity?.runOnUiThread {
+            if (_binding == null) return@runOnUiThread
+            updateRefreshAvailability()
+        }
+    }
+
+    private fun showWifiRequired() {
+        android.widget.Toast.makeText(
+            requireContext(),
+            getString(R.string.offline_wifi_required),
+            android.widget.Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun setupInsets() {
@@ -227,11 +294,15 @@ class OfflineLibraryFragment : BaseFragment() {
         currentAccountFilter = null
         showWatchedOnly = true
         updateTabsUI()
-        if (!watchedSyncRunning) {
-            syncAndReload(SyncParams.watchLater(source = null))
+        if (watchedSyncRunning) return
+        if (!canSyncNow()) {
+            // The tab still shows the last synced rows; only the refresh waits.
+            showWifiRequired()
+            applyFilterAndSort()
+            return
         }
+        syncAndReload(SyncParams.watchLater(source = null))
     }
-
     private fun updateTabsUI() {
         val selectedTab = currentAccountFilter
 

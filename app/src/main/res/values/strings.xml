@@ -990,6 +990,8 @@
     <string name="offline_library_mark_failed">Could not mark as watched</string>
     <string name="offline_source_youtube">YouTube</string>
     <string name="offline_source_bilibili">Bilibili</string>
+    <string name="offline_wifi_required">Connect to Wi-Fi to sync and download</string>
+    <string name="offline_wifi_required_detail">Pull-to-refresh syncs your watch later list and downloads new videos, so it stays off while you are on mobile data.</string>
     <string name="sources_title">Sources</string>
     <string name="sources_sync_label">Sync and download automatically</string>
     <string name="sources_refresh">Refresh</string>

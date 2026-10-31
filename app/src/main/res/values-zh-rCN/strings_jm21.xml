@@ -106,4 +106,6 @@
     <string name="offline_downloading">正在下载 %1$d%%</string>
     <string name="offline_download_failed">下载失败 · 点击重试</string>
     <string name="offline_download_resume">恢复下载</string>
+    <string name="offline_wifi_required">请连接 Wi-Fi 后再同步并下载</string>
+    <string name="offline_wifi_required_detail">下拉刷新会同步待看列表并下载新视频，因此使用移动数据时保持关闭。</string>
 </resources>

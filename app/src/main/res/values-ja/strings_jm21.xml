@@ -90,4 +90,6 @@
     <string name="offline_downloading">ダウンロード中 %1$d%%</string>
     <string name="offline_download_failed">ダウンロード失敗 · タップで再試行</string>
     <string name="offline_download_resume">ダウンロードを再開</string>
+    <string name="offline_wifi_required">Wi-Fi に接続すると同期とダウンロードができます</string>
+    <string name="offline_wifi_required_detail">引っ張って更新すると後で見るを同期して新しい動画をダウンロードするため、モバイルデータでは無効になります。</string>
 </resources>
