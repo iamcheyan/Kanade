@@ -78,7 +78,6 @@ import org.schabi.newpipe.fragments.list.comments.CommentRepliesFragment;
 import org.schabi.newpipe.fragments.list.search.SearchFragment;
 import org.schabi.newpipe.local.feed.notifications.NotificationWorker;
 import org.schabi.newpipe.local.offline.MiniPlayerBar;
-import org.schabi.newpipe.local.offline.OfflinePlayerService;
 import org.schabi.newpipe.player.Player;
 import org.schabi.newpipe.player.event.OnKeyDownListener;
 import org.schabi.newpipe.player.helper.PlayerHolder;
@@ -221,7 +220,6 @@ public class MainActivity extends AppCompatActivity {
                     getWindow().setNavigationBarColor(android.graphics.Color.rgb(13, 15, 20));
                     return kotlin.Unit.INSTANCE;
                 });
-        OfflinePlayerService.restore(this);
         if (getSupportFragmentManager().getBackStackEntryCount() == 0) {
             initFragments();
             mainBinding.fragmentHolder.post(this::updateDrawerNavigation);

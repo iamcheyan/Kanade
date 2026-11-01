@@ -16,10 +16,14 @@ import android.widget.TextView
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import io.reactivex.rxjava3.core.Observable
+import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 import org.schabi.newpipe.BaseFragment
 import org.schabi.newpipe.MainActivity
@@ -81,6 +85,9 @@ class OfflineLibraryFragment : BaseFragment() {
     private var pollTask: Runnable? = null
     private var isPageResumed = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var libraryWork: Disposable? = null
+    private var loadGeneration = 0
+    private val unseenPolls = HashMap<String, Int>()
 
     private val connectivityManager get() = requireContext()
         .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -104,11 +111,11 @@ class OfflineLibraryFragment : BaseFragment() {
         /** Sources read when no tab narrows the list. */
         private val SOURCE_ORDER = listOf(Sources.YOUTUBE, Sources.BILIBILI)
 
-        /** Download progress is best-effort; check at a moderate cadence. */
-        private const val POLL_INTERVAL_MS = 30_000L
+        /** Local job progress while this screen is open. */
+        private const val POLL_INTERVAL_MS = 2_000L
 
-        /** One-time automatic sync per app session on launch. */
-        private var hasAutoSyncedThisSession = false
+        private const val PAYLOAD_PROGRESS = "progress"
+
         fun newInstance(account: String?): OfflineLibraryFragment = OfflineLibraryFragment().apply {
             arguments = Bundle().apply {
                 if (account != null) putString(ARG_ACCOUNT, account)
@@ -200,9 +207,33 @@ class OfflineLibraryFragment : BaseFragment() {
             runCatching { connectivityManager.unregisterNetworkCallback(it) }
         }
         networkCallback = null
+        libraryWork?.dispose()
+        libraryWork = null
         disposables.clear()
         _binding = null
         super.onDestroyView()
+    }
+
+    private fun beginLoad(): Int {
+        loadGeneration += 1
+        libraryWork?.dispose()
+        libraryWork = null
+        watchedSyncRunning = false
+        _binding?.offlineSwipeRefresh?.isRefreshing = false
+        return loadGeneration
+    }
+
+    private fun isCurrent(generation: Int): Boolean {
+        return generation == loadGeneration && isAdded && _binding != null
+    }
+
+    private fun trackLibraryWork(generation: Int, work: Disposable) {
+        if (!isCurrent(generation)) {
+            work.dispose()
+            return
+        }
+        libraryWork = work
+        disposables.add(work)
     }
 
     /**
@@ -294,14 +325,7 @@ class OfflineLibraryFragment : BaseFragment() {
         currentAccountFilter = null
         showWatchedOnly = true
         updateTabsUI()
-        if (watchedSyncRunning) return
-        if (!canSyncNow()) {
-            // The tab still shows the last synced rows; only the refresh waits.
-            showWifiRequired()
-            applyFilterAndSort()
-            return
-        }
-        syncAndReload(SyncParams.watchLater(source = null))
+        applyFilterAndSort()
     }
     private fun updateTabsUI() {
         val selectedTab = currentAccountFilter
@@ -322,121 +346,142 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     /**
-     * Unified sync operation that can accept any [SyncParams].
-     * Resilient to transient errors: updates UI with whatever is available,
-     * keeps pull-to-refresh smooth without hiding content.
+     * Pull-to-refresh. Each enabled source is synced on its own; its rows are
+     * shown as soon as that source returns, then pending rows are queued.
      */
     fun syncAndReload(
         params: SyncParams = SyncParams.watchLater(source = currentAccountFilter)
     ) {
         if (watchedSyncRunning) return
+        if (!canSyncNow()) {
+            binding.offlineSwipeRefresh.isRefreshing = false
+            showWifiRequired()
+            return
+        }
+        val generation = beginLoad()
         watchedSyncRunning = true
         binding.offlineSwipeRefresh.isRefreshing = true
-
-        disposables.add(
-            io.reactivex.rxjava3.core.Single.fromCallable {
-                val shouldAutoDownload = client.autoDownloadEnabled()
-                val syncResult = client.sync(params.copy(autoDownload = false))
-                val loaded = loadEntries(params.source)
-                Triple(syncResult, loaded, Pair(params.source, shouldAutoDownload))
-            }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { (syncResult, loaded, options) ->
-                        val (source, shouldAutoDownload) = options
-                        // Show newly discovered videos before queueing their files.
-                        applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
-
-                        if (syncResult.errors.isNotEmpty()) {
-                            android.widget.Toast.makeText(
-                                requireContext(),
-                                syncResult.errors.joinToString("\n"),
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-
-                        if (shouldAutoDownload) {
-                            // Lay out discovered rows before changing them to queued.
-                            binding.offlineList.post {
-                                if (_binding != null) queuePendingEntries(source)
-                            }
-                        } else {
-                            watchedSyncRunning = false
-                            binding.offlineSwipeRefresh.isRefreshing = false
-                        }
-                    },
-                    { error ->
-                        watchedSyncRunning = false
-                        binding.offlineSwipeRefresh.isRefreshing = false
-                        if (entries.isEmpty()) {
-                            showStatus(
-                                getString(R.string.offline_sync_failed),
-                                error.message ?: error.javaClass.simpleName
-                            )
-                        } else {
-                            applyFilterAndSort()
-                            android.widget.Toast.makeText(
-                                requireContext(),
-                                error.message ?: error.javaClass.simpleName,
-                                android.widget.Toast.LENGTH_LONG
-                            ).show()
-                        }
+        val requested = params.source
+        val syncedSources = ArrayList<String>()
+        val work = Single.fromCallable { sourcesFor(requested) }
+            .subscribeOn(Schedulers.io())
+            .flatMapObservable { sources ->
+                Observable.fromIterable(sources).concatMap { source ->
+                    Single.fromCallable {
+                        val result = client.sync(
+                            SyncParams.watchLater(source = source, autoDownload = false)
+                        )
+                        SourceLoad(source, loadEntries(source, includeHistory = false), result.errors)
                     }
-                )
-        )
+                        .subscribeOn(Schedulers.io())
+                        .onErrorReturn { error ->
+                            SourceLoad(
+                                source,
+                                null,
+                                listOf(error.message ?: error.javaClass.simpleName)
+                            )
+                        }
+                        .toObservable()
+                }
+            }
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                { loaded ->
+                    if (!isCurrent(generation)) return@subscribe
+                    if (loaded.entries != null) {
+                        syncedSources.add(loaded.source)
+                        applyEntries(mergeEntries(entries, loaded.entries))
+                    }
+                    if (loaded.errors.isNotEmpty()) {
+                        toast(loaded.errors.joinToString("\n"))
+                    }
+                },
+                { error ->
+                    if (!isCurrent(generation)) return@subscribe
+                    finishRefresh()
+                    if (entries.isEmpty()) {
+                        showStatus(
+                            getString(R.string.offline_sync_failed),
+                            error.message ?: error.javaClass.simpleName
+                        )
+                    } else {
+                        toast(error.message ?: error.javaClass.simpleName)
+                    }
+                },
+                {
+                    if (!isCurrent(generation)) return@subscribe
+                    val accounts = if (requested != null) listOf(requested) else syncedSources
+                    queuePendingEntries(accounts, generation)
+                }
+            )
+        trackLibraryWork(generation, work)
     }
 
-    /** Queue newly discovered entries only after their rows have been displayed. */
-    private fun queuePendingEntries(source: String?) {
-        val accounts = if (source == null) SOURCE_ORDER else listOf(source)
-        val pendingByAccount = accounts.associateWith { account ->
+    private fun sourcesFor(requested: String?): List<String> {
+        val enabled = client.configuredSources()
+        return if (requested == null) enabled else enabled.filter { it == requested }
+    }
+
+    private fun finishRefresh() {
+        watchedSyncRunning = false
+        _binding?.offlineSwipeRefresh?.isRefreshing = false
+    }
+
+    private fun toast(message: String) {
+        if (!isAdded) return
+        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /** Queue rows that are on the list but not downloaded yet, without reordering them. */
+    private fun queuePendingEntries(accounts: List<String>, generation: Int) {
+        if (!isCurrent(generation) || _binding == null) return
+        val pendingByAccount = accounts.distinct().associateWith { account ->
             entries.filter { it.accountId == account && it.state == LibraryEntry.State.PENDING }
         }
-        val queuedIDs = pendingByAccount.values.flatten().map { it.videoId }.toSet()
-        if (queuedIDs.isEmpty()) {
-            watchedSyncRunning = false
-            binding.offlineSwipeRefresh.isRefreshing = false
+        val queuedIds = pendingByAccount.values.flatten().map { it.videoId }.toSet()
+        if (queuedIds.isEmpty()) {
+            finishRefresh()
+            schedulePolling()
             return
         }
 
         for (entryIndex in entries.indices) {
             val entry = entries[entryIndex]
-            if (entry.videoId in queuedIDs && entry.accountId in accounts) {
+            if (entry.videoId in queuedIds && entry.accountId in accounts) {
                 entries[entryIndex] = entry.copy(state = LibraryEntry.State.QUEUED, error = "")
             }
         }
-        applyFilterAndSort()
+        syncDisplayedFromEntries()
         schedulePolling()
 
-        disposables.add(
-            io.reactivex.rxjava3.core.Single.fromCallable {
-                for ((account, ids) in pendingByAccount) {
-                    client.queueDownloads(account, ids.map { it.videoId })
-                }
-                loadEntries(source)
+        val work = Single.fromCallable {
+            for ((account, ids) in pendingByAccount) {
+                if (ids.isNotEmpty()) client.queueDownloads(account, ids.map { it.videoId })
             }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { loaded ->
-                        watchedSyncRunning = false
-                        binding.offlineSwipeRefresh.isRefreshing = false
-                        applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
-                    },
-                    { error ->
-                        watchedSyncRunning = false
-                        binding.offlineSwipeRefresh.isRefreshing = false
-                        android.widget.Toast.makeText(
-                            requireContext(),
-                            error.message ?: error.javaClass.simpleName,
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                        loadLibrary()
-                    }
-                )
-        )
+            true
+        }
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                {
+                    if (!isCurrent(generation)) return@subscribe
+                    finishRefresh()
+                    schedulePolling()
+                },
+                { error ->
+                    if (!isCurrent(generation)) return@subscribe
+                    finishRefresh()
+                    toast(error.message ?: error.javaClass.simpleName)
+                }
+            )
+        trackLibraryWork(generation, work)
     }
+
+    private data class SourceLoad(
+        val source: String,
+        val entries: List<LibraryEntry>?,
+        val errors: List<String>
+    )
 
     private fun confirmClearWatched() {
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
@@ -538,7 +583,7 @@ class OfflineLibraryFragment : BaseFragment() {
      * library, the source list and job state each cover different rows, so one
      * being unreachable must not hide the others.
      */
-    private fun loadEntries(source: String?): List<LibraryEntry> {
+    private fun loadEntries(source: String?, includeHistory: Boolean = true): List<LibraryEntry> {
         val accounts = if (source != null) listOf(source) else SOURCE_ORDER
         val downloaded = client.libraryAll()
 
@@ -559,18 +604,20 @@ class OfflineLibraryFragment : BaseFragment() {
 
         val visibleDownloads = downloaded.filter { source == null || it.accountId == source }
         val resumeById = HashMap<String, Long>()
-        for (account in accounts) {
-            val accountVideoIds = visibleDownloads
-                .filter { it.accountId == account }
-                .mapTo(HashSet()) { it.id }
-            try {
-                resumeById.putAll(client.resumePositions(account, accountVideoIds))
-            } catch (e: Exception) {
-                // Resume positions are optional; the library itself still loads.
+        if (includeHistory) {
+            for (account in accounts) {
+                val accountVideoIds = visibleDownloads
+                    .filter { it.accountId == account }
+                    .mapTo(HashSet()) { it.id }
+                try {
+                    resumeById.putAll(client.resumePositions(account, accountVideoIds))
+                } catch (e: Exception) {
+                    // Resume positions are optional; the library itself still loads.
+                }
             }
+            progressById.clear()
+            progressById.putAll(resumeById)
         }
-        progressById.clear()
-        progressById.putAll(resumeById)
 
         return buildLibraryEntries(visibleDownloads, watchLater, jobs, resumeById)
     }
@@ -580,9 +627,19 @@ class OfflineLibraryFragment : BaseFragment() {
         existing: List<LibraryEntry>,
         fresh: List<LibraryEntry>
     ): List<LibraryEntry> {
+        val previous = existing.associateBy { it.accountId + "/" + it.videoId }
         val replaced = fresh.mapTo(HashSet()) { it.accountId }
         val merged = existing.filter { it.accountId !in replaced }.toMutableList()
-        merged.addAll(fresh)
+        merged.addAll(
+            fresh.map { row ->
+                val old = previous[row.accountId + "/" + row.videoId]
+                if (old != null && row.resumePosition == 0L && old.resumePosition > 0L) {
+                    row.copy(resumePosition = old.resumePosition)
+                } else {
+                    row
+                }
+            }
+        )
         return merged
     }
 
@@ -594,33 +651,31 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun loadLibrary() {
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && _binding != null) {
             showStatus(
                 getString(R.string.offline_library_loading),
                 VideodClient.DEFAULT_BASE_URL
             )
         }
         val source = currentAccountFilter
-        disposables.add(
-            io.reactivex.rxjava3.core.Single.fromCallable { loadEntries(source) }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { loaded ->
-                        applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
-                        if (!hasAutoSyncedThisSession) {
-                            hasAutoSyncedThisSession = true
-                            syncAndReload(SyncParams.watchLater(source = null))
-                        }
-                    },
-                    { error ->
-                        showStatus(
-                            getString(R.string.offline_library_unreachable),
-                            error.message ?: error.javaClass.simpleName
-                        )
-                    }
-                )
-        )
+        val generation = beginLoad()
+        val work = Single.fromCallable { loadEntries(source) }
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                { loaded ->
+                    if (!isCurrent(generation)) return@subscribe
+                    applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
+                },
+                { error ->
+                    if (!isCurrent(generation)) return@subscribe
+                    showStatus(
+                        getString(R.string.offline_library_unreachable),
+                        error.message ?: error.javaClass.simpleName
+                    )
+                }
+            )
+        trackLibraryWork(generation, work)
     }
 
     private fun applyFilterAndSort() {
@@ -719,7 +774,7 @@ class OfflineLibraryFragment : BaseFragment() {
         val accounts = entries.filter { it.isActive }.mapTo(LinkedHashSet()) { it.accountId }
         if (accounts.isEmpty()) return
         disposables.add(
-            io.reactivex.rxjava3.core.Single.fromCallable {
+            Single.fromCallable {
                 accounts.associateWith { account -> client.activeDownloads(account) }
             }
                 .subscribeOn(Schedulers.io())
@@ -729,11 +784,8 @@ class OfflineLibraryFragment : BaseFragment() {
                         if (_binding == null) return@subscribe
                         val settled = updateJobStates(jobsByAccount.values.flatten())
                         if (settled) {
-                            // A finished job becomes a library row, and the
-                            // library endpoint is the source of truth for that.
-                            loadLibrary()
+                            promoteFinished(accounts)
                         } else {
-                            adapter.submit(displayedEntries)
                             schedulePolling()
                         }
                     },
@@ -744,6 +796,98 @@ class OfflineLibraryFragment : BaseFragment() {
                     }
                 )
         )
+    }
+
+    /**
+     * A row left the active job list. Turn it into a library row where the
+     * file exists, otherwise show the failed or paused job, in the same position.
+     */
+    private fun promoteFinished(accounts: Set<String>) {
+        disposables.add(
+            Single.fromCallable {
+                accounts.associateWith { account ->
+                    client.library(account) to client.downloads(account)
+                }
+            }
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    { snapshot ->
+                        if (_binding == null) return@subscribe
+                        for (index in entries.indices) {
+                            val entry = entries[index]
+                            if (!entry.isActive) continue
+                            val pair = snapshot[entry.accountId] ?: continue
+                            val key = entry.accountId + "/" + entry.videoId
+                            val video = pair.first.firstOrNull { it.id == entry.videoId }
+                            if (video != null) {
+                                entries[index] = entry.copy(
+                                    state = LibraryEntry.State.DOWNLOADED,
+                                    progress = 100,
+                                    remoteMissingSince = video.remoteMissingSince,
+                                    error = ""
+                                )
+                                unseenPolls.remove(key)
+                                continue
+                            }
+                            val job = pair.second
+                                .filter { it.videoId == entry.videoId }
+                                .maxByOrNull { it.id }
+                            if (job == null) {
+                                if ((unseenPolls[key] ?: 0) >= 2 && entry.jobId == 0L) {
+                                    entries[index] = entry.copy(
+                                        state = LibraryEntry.State.PENDING,
+                                        progress = 0
+                                    )
+                                }
+                                continue
+                            }
+                            if (job.isActive) {
+                                entries[index] = entry.copy(
+                                    state = if (job.state == DownloadJob.DOWNLOADING) {
+                                        LibraryEntry.State.ACTIVE
+                                    } else {
+                                        LibraryEntry.State.QUEUED
+                                    },
+                                    progress = job.progress,
+                                    jobId = job.id,
+                                    error = job.error
+                                )
+                                continue
+                            }
+                            val state = when (job.state) {
+                                DownloadJob.PAUSED -> LibraryEntry.State.PAUSED
+                                DownloadJob.FAILED -> LibraryEntry.State.FAILED
+                                else -> LibraryEntry.State.PENDING
+                            }
+                            entries[index] = entry.copy(
+                                state = state,
+                                progress = job.progress,
+                                jobId = job.id,
+                                error = job.error
+                            )
+                            unseenPolls.remove(key)
+                        }
+                        syncDisplayedFromEntries()
+                        schedulePolling()
+                    },
+                    { schedulePolling() }
+                )
+        )
+    }
+
+    /** Copy updated rows into the visible list without changing their order. */
+    private fun syncDisplayedFromEntries() {
+        for (index in displayedEntries.indices) {
+            val shown = displayedEntries[index]
+            val fresh = entries.firstOrNull {
+                it.videoId == shown.videoId && it.accountId == shown.accountId
+            } ?: continue
+            if (fresh != shown) {
+                displayedEntries[index] = fresh
+                adapter.bindProgressAt(index, fresh)
+            }
+        }
     }
 
     /**
@@ -765,7 +909,15 @@ class OfflineLibraryFragment : BaseFragment() {
         for (index in entries.indices) {
             val entry = entries[index]
             if (!entry.isActive) continue
-            val job = latest[entry.accountId + "/" + entry.videoId] ?: continue
+            val key = entry.accountId + "/" + entry.videoId
+            val job = latest[key]
+            if (job == null) {
+                val misses = (unseenPolls[key] ?: 0) + 1
+                unseenPolls[key] = misses
+                if (entry.jobId > 0L || misses >= 2) settled = true
+                continue
+            }
+            unseenPolls.remove(key)
             val state = when (job.state) {
                 DownloadJob.QUEUED -> LibraryEntry.State.QUEUED
 
@@ -787,14 +939,8 @@ class OfflineLibraryFragment : BaseFragment() {
                 error = job.error
             )
         }
-        if (settled) return true
-        for (index in displayedEntries.indices) {
-            val entry = displayedEntries[index]
-            displayedEntries[index] = entries.firstOrNull {
-                it.videoId == entry.videoId && it.accountId == entry.accountId
-            } ?: entry
-        }
-        return false
+        syncDisplayedFromEntries()
+        return settled
     }
 
     /** Resume a paused job through videod. */
@@ -915,9 +1061,27 @@ class OfflineLibraryFragment : BaseFragment() {
         private val items = ArrayList<LibraryEntry>()
 
         fun submit(next: List<LibraryEntry>) {
+            val old = items.toList()
+            val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize(): Int = old.size
+                override fun getNewListSize(): Int = next.size
+                override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    return old[oldPos].videoId == next[newPos].videoId &&
+                        old[oldPos].accountId == next[newPos].accountId
+                }
+                override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean {
+                    return old[oldPos] == next[newPos]
+                }
+            })
             items.clear()
             items.addAll(next)
-            notifyDataSetChanged()
+            diff.dispatchUpdatesTo(this)
+        }
+
+        fun bindProgressAt(position: Int, entry: LibraryEntry) {
+            if (position !in items.indices) return
+            items[position] = entry
+            notifyItemChanged(position, PAYLOAD_PROGRESS)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -933,6 +1097,14 @@ class OfflineLibraryFragment : BaseFragment() {
             holder.bind(items[position])
         }
 
+        override fun onBindViewHolder(holder: Holder, position: Int, payloads: MutableList<Any>) {
+            if (payloads.isNotEmpty()) {
+                holder.bindProgress(items[position])
+                return
+            }
+            super.onBindViewHolder(holder, position, payloads)
+        }
+
         override fun getItemCount(): Int = items.size
 
         inner class Holder(private val itemBinding: ItemOfflineVideoBinding) :
@@ -940,8 +1112,13 @@ class OfflineLibraryFragment : BaseFragment() {
 
             fun bind(entry: LibraryEntry) {
                 itemBinding.offlineItemTitle.text = entry.title
-                itemBinding.offlineItemMeta.text = buildMeta(entry)
                 CoilHelper.loadThumbnail(itemBinding.offlineItemThumbnail, entry.thumbnail)
+                bindProgress(entry)
+            }
+
+            fun bindProgress(entry: LibraryEntry) {
+                itemBinding.offlineItemMeta.text = buildMeta(entry)
+                itemBinding.root.setOnClickListener { onRowClick(entry) }
 
                 val watched = entry.isWatched
                 itemBinding.offlineItemWatchedBadge.visibility = if (watched) {
@@ -970,6 +1147,7 @@ class OfflineLibraryFragment : BaseFragment() {
                 ) {
                     itemBinding.offlineItemProgress.visibility = View.GONE
                 } else {
+                    itemBinding.offlineItemProgress.isIndeterminate = false
                     itemBinding.offlineItemProgress.visibility = View.GONE
                 }
                 itemBinding.offlineItemMenu.setOnClickListener {

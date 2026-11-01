@@ -19,12 +19,8 @@ import org.schabi.newpipe.R
 import org.schabi.newpipe.databinding.FragmentSettingsOfflineBinding
 
 /**
- * Settings for the download service.
- *
- * Everything here writes to videod's settings table. The on-device scheduler
- * reads that table before each sync, so toggling a switch in this screen is
- * what actually decides whether a WiFi connection starts downloading — the
- * app itself never runs the download loop.
+ * Settings for the download service. Switches are stored in videod.
+ * Sync now is an explicit request; the library does not sync on its own.
  */
 class SettingsFragment : BaseFragment() {
 
@@ -448,151 +444,172 @@ class SettingsFragment : BaseFragment() {
         }
         syncDetails?.apply {
             visibility = View.VISIBLE
-            text = getString(R.string.settings_sync_connecting)
+            text = currentSyncStage
         }
         statusText?.text = getString(R.string.settings_syncing)
 
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val startedAt = System.nanoTime()
         disposables.add(
             Single.fromCallable {
-                mainHandler.post {
-                    currentSyncStage = getString(R.string.settings_sync_youtube_running)
-                    syncDetails?.text = currentSyncStage
-                }
-                val startedAt = System.nanoTime()
                 val syncSettings = client.settings()
                 val autoDownload = syncSettings["auto_download"] != "off"
-                val youtubeEnabled = syncSettings["source_youtube"] != "off"
-                val bilibiliEnabled = syncSettings["source_bilibili"] != "off"
-                val sourceCount = (if (youtubeEnabled) 1 else 0) + (if (bilibiliEnabled) 1 else 0)
-                val youtubeStarted = System.nanoTime()
-                val youtubeResult = if (youtubeEnabled) {
-                    client.sync(Sources.YOUTUBE, autoDownload)
-                } else {
-                    null
-                }
-                val youtubeDuration = if (youtubeEnabled) elapsedSeconds(youtubeStarted) else 0L
-                mainHandler.post {
-                    if (youtubeResult != null) {
-                        updateSyncDetail(
-                            R.string.settings_sync_youtube_done,
-                            youtubeDuration,
-                            formatSyncResponse(Sources.YOUTUBE, youtubeResult)
-                        )
-                    } else {
-                        syncDetails?.append("\n")
-                        syncDetails?.append(getString(R.string.settings_sync_source_skipped, Sources.label(Sources.YOUTUBE)))
-                    }
-                    syncProgress?.apply {
-                        max = sourceCount + 2
-                        isIndeterminate = false
-                        progress = 1
-                    }
-                    if (bilibiliEnabled) {
-                        currentSyncStage = getString(R.string.settings_sync_bilibili_running)
-                        syncDetails?.append("\n")
-                        syncDetails?.append(currentSyncStage)
-                    }
-                }
-
-                val bilibiliStarted = System.nanoTime()
-                val bilibiliResult = if (bilibiliEnabled) {
-                    client.sync(Sources.BILIBILI, autoDownload)
-                } else {
-                    null
-                }
-                val bilibiliDuration = if (bilibiliEnabled) elapsedSeconds(bilibiliStarted) else 0L
-                mainHandler.post {
-                    if (bilibiliResult != null) {
-                        updateSyncDetail(
-                            R.string.settings_sync_bilibili_done,
-                            bilibiliDuration,
-                            formatSyncResponse(Sources.BILIBILI, bilibiliResult)
-                        )
-                    } else {
-                        syncDetails?.append("\n")
-                        syncDetails?.append(
-                            getString(
-                                R.string.settings_sync_source_skipped,
-                                Sources.label(Sources.BILIBILI)
-                            )
-                        )
-                    }
-                    syncProgress?.apply {
-                        max = sourceCount + 2
-                        isIndeterminate = false
-                        progress = sourceCount
-                    }
-                    currentSyncStage = getString(R.string.settings_sync_storage_running)
-                }
-
-                mainHandler.post {
-                    syncProgress?.apply {
-                        isIndeterminate = true
-                        progress = sourceCount
-                    }
-                }
-                val storage = client.storage()
-                val breakdown = client.breakdown()
-                val result = SyncResult(
-                    storage = storage,
-                    breakdown = breakdown,
-                    youtubeDuration = youtubeDuration,
-                    bilibiliDuration = bilibiliDuration,
-                    totalDuration = elapsedSeconds(startedAt)
-                )
-                mainHandler.post {
-                    syncProgress?.apply {
-                        isIndeterminate = false
-                        progress = 3
-                    }
-                    syncDetails?.append("\n")
-                    syncDetails?.append(getString(R.string.settings_sync_storage_done))
-                }
-                result
+                client.configuredSources(syncSettings) to autoDownload
             }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { result ->
+                    { (sources, autoDownload) ->
+                        syncSources(sources, autoDownload, 0, startedAt, 0L, 0L)
+                    },
+                    { error -> showSyncFailure(error) }
+                )
+        )
+    }
+
+    /** One source at a time, so the log updates as soon as that source returns. */
+    private fun syncSources(
+        sources: List<String>,
+        autoDownload: Boolean,
+        index: Int,
+        startedAt: Long,
+        youtubeDuration: Long,
+        bilibiliDuration: Long
+    ) {
+        if (!syncRunning || _binding == null) return
+        if (index >= sources.size) {
+            finishWithStorage(startedAt, youtubeDuration, bilibiliDuration, sources.size)
+            return
+        }
+        val source = sources[index]
+        currentSyncStage = getString(
+            if (source == Sources.YOUTUBE) {
+                R.string.settings_sync_youtube_running
+            } else {
+                R.string.settings_sync_bilibili_running
+            }
+        )
+        if (index == 0) {
+            syncDetails?.text = currentSyncStage
+        } else {
+            syncDetails?.append("\n")
+            syncDetails?.append(currentSyncStage)
+        }
+        disposables.add(
+            Single.fromCallable {
+                val sourceStarted = System.nanoTime()
+                // One source at a time: the log is per source, so unwrap the
+                // aggregate result the multi-source overload would return.
+                val aggregated = client.sync(
+                    SyncParams.watchLater(source = source, autoDownload = autoDownload)
+                )
+                val response = aggregated.responses.firstOrNull()
+                    ?: SyncResponse(
+                        source = source,
+                        accountId = source,
+                        providerSync = "not_configured",
+                        syncedItems = 0,
+                        watchLaterItems = 0,
+                        downloadsQueued = 0,
+                        errors = aggregated.errors,
+                        note = aggregated.errors.joinToString("; ")
+                    )
+                elapsedSeconds(sourceStarted) to response
+            }
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    { (seconds, response) ->
+                        if (!syncRunning || _binding == null) return@subscribe
+                        updateSyncDetail(
+                            if (source == Sources.YOUTUBE) {
+                                R.string.settings_sync_youtube_done
+                            } else {
+                                R.string.settings_sync_bilibili_done
+                            },
+                            seconds,
+                            formatSyncResponse(source, response)
+                        )
                         syncProgress?.apply {
-                            max = 4
+                            max = sources.size + 2
                             isIndeterminate = false
-                            progress = 4
+                            progress = index + 1
                         }
+                        syncSources(
+                            sources,
+                            autoDownload,
+                            index + 1,
+                            startedAt,
+                            if (source == Sources.YOUTUBE) seconds else youtubeDuration,
+                            if (source == Sources.BILIBILI) seconds else bilibiliDuration
+                        )
+                    },
+                    { error -> showSyncFailure(error) }
+                )
+        )
+    }
+
+    private fun finishWithStorage(
+        startedAt: Long,
+        youtubeDuration: Long,
+        bilibiliDuration: Long,
+        sourceCount: Int
+    ) {
+        if (!syncRunning || _binding == null) return
+        currentSyncStage = getString(R.string.settings_sync_storage_running)
+        syncDetails?.append("\n")
+        syncDetails?.append(currentSyncStage)
+        syncProgress?.isIndeterminate = true
+        disposables.add(
+            Single.fromCallable { client.storage() to client.breakdown() }
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    { (storage, breakdown) ->
+                        if (_binding == null) return@subscribe
+                        syncProgress?.apply {
+                            max = sourceCount + 2
+                            isIndeterminate = false
+                            progress = sourceCount + 2
+                        }
+                        syncDetails?.append("\n")
+                        syncDetails?.append(getString(R.string.settings_sync_storage_done))
                         syncDetails?.append("\n")
                         syncDetails?.append(
                             getString(
                                 R.string.settings_sync_summary,
-                                result.youtubeDuration,
-                                result.bilibiliDuration,
-                                result.totalDuration,
-                                result.storage.files,
-                                formatBytes(result.storage.bytes),
-                                result.storage.orphans,
-                                formatBytes(result.storage.orphanBytes)
+                                youtubeDuration,
+                                bilibiliDuration,
+                                elapsedSeconds(startedAt),
+                                storage.files,
+                                formatBytes(storage.bytes),
+                                storage.orphans,
+                                formatBytes(storage.orphanBytes)
                             )
                         )
-                        showStorage(result.storage)
-                        updateWatchedStorage(result.breakdown)
+                        showStorage(storage)
+                        updateWatchedStorage(breakdown)
                         currentSyncStage = getString(R.string.settings_sync_complete)
                         statusText?.text = currentSyncStage
                         finishSync()
                     },
-                    { error ->
-                        syncDetails?.append("\n")
-                        syncDetails?.append(
-                            getString(
-                                R.string.settings_sync_failed_detail,
-                                currentSyncStage,
-                                error.message ?: error.javaClass.simpleName
-                            )
-                        )
-                        statusText?.text = getString(R.string.settings_sync_failed)
-                        finishSync()
-                    }
+                    { error -> showSyncFailure(error) }
                 )
         )
+    }
+
+    private fun showSyncFailure(error: Throwable) {
+        if (_binding != null) {
+            syncDetails?.append("\n")
+            syncDetails?.append(
+                getString(
+                    R.string.settings_sync_failed_detail,
+                    currentSyncStage,
+                    error.message ?: error.javaClass.simpleName
+                )
+            )
+            statusText?.text = getString(R.string.settings_sync_failed)
+        }
+        finishSync()
     }
 
     private fun updateSyncDetail(labelRes: Int, seconds: Long, response: String) {
@@ -630,14 +647,6 @@ class SettingsFragment : BaseFragment() {
     }
 
     private fun elapsedSeconds(startedAtNanos: Long): Long = ((System.nanoTime() - startedAtNanos) / 1_000_000_000L).coerceAtLeast(1)
-
-    private data class SyncResult(
-        val storage: StorageStats,
-        val breakdown: StorageBreakdown,
-        val youtubeDuration: Long,
-        val bilibiliDuration: Long,
-        val totalDuration: Long
-    )
 
     /** Open the breakdown screen, which reads its own data. */
     private fun openAnalysis() {

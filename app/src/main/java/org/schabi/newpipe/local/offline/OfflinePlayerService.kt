@@ -52,6 +52,14 @@ class OfflinePlayerService : Service() {
         fun onPlaybackChanged()
     }
 
+    data class SavedSession(
+        val videoId: String,
+        val account: String,
+        val title: String,
+        val artist: String,
+        val art: String
+    )
+
     companion object {
         private const val CHANNEL_ID = "jm21_offline_playback"
         private const val NOTIFICATION_ID = 4711
@@ -63,6 +71,7 @@ class OfflinePlayerService : Service() {
         private const val PREF_ID = "video_id"
         private const val PREF_ACCOUNT = "account"
         private const val PREF_POSITION = "position"
+        private const val PREF_WANTS_PLAYBACK = "wants_playback"
 
         /**
          * How long a paused player is kept for instant resume: long enough that
@@ -115,6 +124,13 @@ class OfflinePlayerService : Service() {
         @Volatile
         private var wantsPlayback: Boolean = false
 
+        /**
+         * The detail screen is in the foreground, so an idle release must wait
+         * until it stops. Otherwise a paused frame loses its player.
+         */
+        @JvmStatic
+        var detailVisible: Boolean = false
+
         private val stateListeners = CopyOnWriteArraySet<PlaybackListener>()
         private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -126,6 +142,21 @@ class OfflinePlayerService : Service() {
          */
         @JvmStatic
         fun hasItem(): Boolean = currentVideoId.isNotEmpty()
+
+        /** Last item remembered on disk, without starting the player. */
+        @JvmStatic
+        fun savedSession(context: Context): SavedSession? {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val id = prefs.getString(PREF_ID, "").orEmpty()
+            if (id.isEmpty()) return null
+            return SavedSession(
+                videoId = id,
+                account = prefs.getString(PREF_ACCOUNT, "").orEmpty(),
+                title = prefs.getString(PREF_TITLE, "").orEmpty(),
+                artist = prefs.getString(PREF_ARTIST, "").orEmpty(),
+                art = prefs.getString(PREF_ART, "").orEmpty()
+            )
+        }
 
         @JvmStatic
         fun isPlaying(): Boolean = player?.isPlaying == true
@@ -156,7 +187,19 @@ class OfflinePlayerService : Service() {
         fun toggle(context: Context) {
             val exo = player
             if (exo == null) {
-                restore(context)
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val url = prefs.getString(PREF_URL, "").orEmpty()
+                val id = prefs.getString(PREF_ID, "").orEmpty()
+                if (url.isEmpty() || id.isEmpty()) return
+                play(
+                    context,
+                    url,
+                    prefs.getString(PREF_TITLE, "").orEmpty(),
+                    prefs.getString(PREF_ARTIST, "").orEmpty(),
+                    prefs.getString(PREF_ART, "").orEmpty(),
+                    id,
+                    prefs.getString(PREF_ACCOUNT, "").orEmpty()
+                )
                 return
             }
             exo.playWhenReady = !exo.playWhenReady
@@ -240,11 +283,9 @@ class OfflinePlayerService : Service() {
                 putExtra(EXTRA_ID, videoId)
                 putExtra(EXTRA_ACCOUNT, account)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            // The screen is already open, so a background service is allowed and
+            // a foreground notification is not required until playback starts.
+            context.startService(intent)
         }
     }
 
@@ -262,10 +303,6 @@ class OfflinePlayerService : Service() {
         super.onCreate()
         createChannel()
         setUpMediaSession()
-        // Build the player eagerly. The detail screen binds and immediately
-        // asks for it; creating it here removes the window where the view has
-        // nothing to attach to and shows a black frame.
-        ensurePlayer()
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         currentVideoId = prefs.getString(PREF_ID, "").orEmpty()
         if (currentVideoId.isNotEmpty()) {
@@ -304,7 +341,25 @@ class OfflinePlayerService : Service() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 updateNotification()
                 notifyPlaybackChanged()
-                if (isPlaying) cancelRelease() else scheduleRelease()
+                if (isPlaying) {
+                    cancelRelease()
+                    handler.removeCallbacks(positionSaver)
+                    handler.postDelayed(positionSaver, 5000)
+                } else if (player?.playWhenReady != true) {
+                    savePlaybackPosition()
+                    handler.removeCallbacks(positionSaver)
+                    scheduleRelease()
+                }
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                setWantsPlayback(playWhenReady)
+                if (playWhenReady) {
+                    cancelRelease()
+                } else {
+                    handler.removeCallbacks(positionSaver)
+                    scheduleRelease()
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -316,15 +371,21 @@ class OfflinePlayerService : Service() {
     }
 
     /**
-     * Release the player once playback has been idle for a while.
-     *
-     * The service is sticky and the mini player outlives the detail screen, so
-     * the player cannot be torn down on pause. Keeping it costs a codec and an
-     * audio session, and this device's HAL keeps the DAC rail powered while a
-     * session exists. The item, position and notification survive in prefs, so
-     * resuming rebuilds the player from there.
+     * Drop the audio session after a pause. This device keeps the DAC powered
+     * while a session exists. Prefs still have the item, so play can rebuild it.
      */
+    fun scheduleIdleRelease() {
+        if (player?.isPlaying == true || player?.playWhenReady == true) return
+        scheduleRelease()
+    }
+
+    fun cancelIdleRelease() {
+        cancelRelease()
+    }
+
     private fun scheduleRelease() {
+        if (detailVisible) return
+        if (player?.isPlaying == true || player?.playWhenReady == true) return
         handler.removeCallbacks(releasePlayer)
         handler.postDelayed(releasePlayer, IDLE_RELEASE_DELAY_MS)
     }
@@ -334,13 +395,18 @@ class OfflinePlayerService : Service() {
     }
 
     private val releasePlayer = Runnable {
-        val exo = player ?: return@Runnable
-        if (exo.isPlaying || exo.playWhenReady) return@Runnable
+        if (player?.isPlaying == true || player?.playWhenReady == true) return@Runnable
+        releasePlayerNow()
+        notifyPlaybackChanged()
+    }
+
+    private fun releasePlayerNow() {
         savePlaybackPosition()
         handler.removeCallbacks(positionSaver)
-        exo.release()
+        handler.removeCallbacks(releasePlayer)
+        player?.release()
         player = null
-        notifyPlaybackChanged()
+        leaveForeground()
     }
 
     /**
@@ -409,24 +475,30 @@ class OfflinePlayerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            null, ACTION_RESTORE -> {
+            null -> {
                 val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                val url = prefs.getString(PREF_URL, "").orEmpty()
-                currentVideoId = prefs.getString(PREF_ID, "").orEmpty()
-                currentTitle = prefs.getString(PREF_TITLE, "").orEmpty()
-                currentArtist = prefs.getString(PREF_ARTIST, "").orEmpty()
-                currentArt = prefs.getString(PREF_ART, "").orEmpty()
-                currentAccount = prefs.getString(PREF_ACCOUNT, "").orEmpty()
-                if (url.isNotEmpty() && currentVideoId.isNotEmpty()) {
-                    val exo = player ?: ensurePlayer()
-                    exo.setMediaItem(
-                        MediaItem.fromUri(url),
-                        prefs.getLong(PREF_POSITION, 0L)
-                    )
-                    exo.prepare()
-                    exo.playWhenReady = false
-                    notifyPlaybackChanged()
+                if (!prefs.getBoolean(PREF_WANTS_PLAYBACK, false)) {
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
+                rememberSession(prefs)
+                val url = prefs.getString(PREF_URL, "").orEmpty()
+                if (url.isNotEmpty() && currentVideoId.isNotEmpty()) {
+                    startPlayback(url)
+                    return START_STICKY
+                }
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            ACTION_RESTORE -> {
+                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                rememberSession(prefs)
+                val url = prefs.getString(PREF_URL, "").orEmpty()
+                if (url.isNotEmpty() && currentVideoId.isNotEmpty()) {
+                    preparePaused(url)
+                }
+                return START_NOT_STICKY
             }
 
             ACTION_PLAY -> {
@@ -479,15 +551,31 @@ class OfflinePlayerService : Service() {
             }
 
             ACTION_STOP -> {
-                wantsPlayback = false
+                setWantsPlayback(false)
                 savePlaybackPosition()
-                player?.stop()
-                return START_STICKY
+                releasePlayerNow()
+                currentVideoId = ""
+                stopSelf()
+                notifyPlaybackChanged()
+                return START_NOT_STICKY
             }
         }
-        // START_STICKY keeps audio alive if the system reclaims the process;
-        // without it a background listen stops on the first memory pressure.
-        return START_STICKY
+        return if (player?.playWhenReady == true) START_STICKY else START_NOT_STICKY
+    }
+
+    private fun rememberSession(prefs: android.content.SharedPreferences) {
+        currentVideoId = prefs.getString(PREF_ID, "").orEmpty()
+        currentTitle = prefs.getString(PREF_TITLE, "").orEmpty()
+        currentArtist = prefs.getString(PREF_ARTIST, "").orEmpty()
+        currentArt = prefs.getString(PREF_ART, "").orEmpty()
+        currentAccount = prefs.getString(PREF_ACCOUNT, "").orEmpty()
+    }
+
+    private fun setWantsPlayback(playing: Boolean) {
+        wantsPlayback = playing
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_WANTS_PLAYBACK, playing)
+            .apply()
     }
 
     private fun savePlaybackPosition() {
@@ -499,15 +587,17 @@ class OfflinePlayerService : Service() {
     }
     private val positionSaver = object : Runnable {
         override fun run() {
+            val exo = player ?: return
+            if (!exo.isPlaying) return
             savePlaybackPosition()
-            if (player != null) handler.postDelayed(this, 5000)
+            handler.postDelayed(this, 5000)
         }
     }
 
     private fun preparePaused(url: String) {
         if (url.isEmpty()) return
         val exo = player ?: ensurePlayer()
-        wantsPlayback = false
+        setWantsPlayback(false)
         exo.playWhenReady = false
         exo.setMediaItem(
             MediaItem.fromUri(url),
@@ -515,20 +605,14 @@ class OfflinePlayerService : Service() {
         )
         exo.prepare()
         exo.playWhenReady = false
-        promoteForeground()
         handler.removeCallbacks(positionSaver)
-        handler.postDelayed(positionSaver, 5000)
-        exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                savePlaybackPosition()
-            }
-        })
     }
+
     private fun startPlayback(url: String) {
         if (url.isEmpty()) return
         val existing = player
         if (existing != null && existing.currentMediaItem?.localConfiguration?.uri.toString() == url) {
-            wantsPlayback = true
+            setWantsPlayback(true)
             existing.playWhenReady = true
             promoteForeground()
             notifyPlaybackChanged()
@@ -540,17 +624,23 @@ class OfflinePlayerService : Service() {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getLong(PREF_POSITION, 0L)
         )
         exo.prepare()
-        wantsPlayback = true
+        setWantsPlayback(true)
         exo.playWhenReady = true
         promoteForeground()
-        handler.removeCallbacks(positionSaver)
-        handler.postDelayed(positionSaver, 5000)
         notifyPlaybackChanged()
-        exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                savePlaybackPosition()
-            }
-        })
+    }
+
+    private var inForeground = false
+
+    private fun leaveForeground() {
+        if (!inForeground) return
+        inForeground = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
     }
 
     private fun promoteForeground() {
@@ -564,6 +654,7 @@ class OfflinePlayerService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        inForeground = true
     }
 
     private fun createChannel() {
@@ -635,6 +726,8 @@ class OfflinePlayerService : Service() {
     override fun onDestroy() {
         savePlaybackPosition()
         handler.removeCallbacks(positionSaver)
+        handler.removeCallbacks(releasePlayer)
+        leaveForeground()
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null

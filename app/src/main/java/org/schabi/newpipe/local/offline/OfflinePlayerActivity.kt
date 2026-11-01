@@ -60,6 +60,8 @@ class OfflinePlayerActivity : AppCompatActivity() {
     private var currentAccount: String = ""
     private var resumePositionSec: Long = 0
     private var attachAttempts = 0
+    private var startedOnce = false
+    private var saveProgress = false
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? OfflinePlayerService.LocalBinder)?.service()
@@ -382,14 +384,18 @@ class OfflinePlayerActivity : AppCompatActivity() {
     }
 
     /** Save every 10 s while playing, so a crash loses at most that much. */
-    private fun scheduleProgressSaves() {
-        val save = object : Runnable {
-            override fun run() {
-                persistProgress()
-                handler.postDelayed(this, 10_000)
-            }
+    private val progressSaveRunnable = object : Runnable {
+        override fun run() {
+            if (!saveProgress) return
+            if (OfflinePlayerService.isPlaying()) persistProgress()
+            handler.postDelayed(this, 10_000)
         }
-        handler.postDelayed(save, 10_000)
+    }
+
+    private fun scheduleProgressSaves() {
+        saveProgress = true
+        handler.removeCallbacks(progressSaveRunnable)
+        handler.postDelayed(progressSaveRunnable, 10_000)
     }
 
     /** Persist the position so the next open resumes here. */
@@ -658,16 +664,41 @@ class OfflinePlayerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        OfflinePlayerService.detailVisible = true
+        service?.cancelIdleRelease()
+        if (startedOnce && OfflinePlayerService.player == null && currentVideoId.isNotEmpty() &&
+            !OfflinePlayerService.wantsPlayback()
+        ) {
+            val url = VideodClient.DEFAULT_BASE_URL + "/api/media/" + currentVideoId +
+                "?account_id=" + currentAccount
+            OfflinePlayerService.loadPaused(
+                this,
+                url,
+                titleView?.text?.toString().orEmpty(),
+                Sources.label(currentAccount),
+                "",
+                currentVideoId,
+                currentAccount
+            )
+        }
+        startedOnce = true
         if (bound) scheduleAttach()
     }
 
     override fun onStop() {
-        super.onStop()
         persistProgress()
+        saveProgress = false
+        handler.removeCallbacks(progressSaveRunnable)
+        OfflinePlayerService.detailVisible = false
+        if (OfflinePlayerService.player?.isPlaying != true) {
+            service?.scheduleIdleRelease()
+        }
+        super.onStop()
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(attachRunnable)
+        handler.removeCallbacks(progressSaveRunnable)
         progressTicker?.let { handler.removeCallbacks(it) }
         handler.removeCallbacks(hideControlsRunnable)
         disposables.clear()

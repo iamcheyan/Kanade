@@ -298,14 +298,25 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
     }
 
     /**
+     * Sources whose switch is not off. A missing key stays enabled, matching
+     * the settings screen. Pass an already loaded map to avoid a second request.
+     */
+    fun configuredSources(settings: Map<String, String> = this.settings()): List<String> {
+        return listOf(Sources.YOUTUBE, Sources.BILIBILI).filter { source ->
+            val key = if (source == Sources.YOUTUBE) "source_youtube" else "source_bilibili"
+            settings[key] != "off"
+        }
+    }
+
+    /**
      * Pull remote lists or channel data into the local database according to [params].
-     * When [SyncParams.source] is null, syncs all supported sources and aggregates results.
+     * When [SyncParams.source] is null, only sources that are switched on are synced.
      */
     fun sync(params: SyncParams): SyncResult {
         val sources = if (params.source != null) {
             listOf(params.source)
         } else {
-            listOf(Sources.YOUTUBE, Sources.BILIBILI)
+            configuredSources()
         }
 
         val responses = mutableListOf<SyncResponse>()

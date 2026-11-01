@@ -41,6 +41,7 @@ class MiniPlayerBar(
 
     private val ticker = object : Runnable {
         override fun run() {
+            if (!OfflinePlayerService.isPlaying()) return
             updateProgress()
             handler.postDelayed(this, 500)
         }
@@ -72,7 +73,8 @@ class MiniPlayerBar(
 
     /** Show or hide the bar and keep its text and icon in sync. */
     fun refresh() {
-        playerItemAvailable = OfflinePlayerService.hasItem()
+        val saved = if (OfflinePlayerService.hasItem()) null else OfflinePlayerService.savedSession(activity)
+        playerItemAvailable = OfflinePlayerService.hasItem() || saved != null
         if (!playerItemAvailable) {
             binding.miniPlayerTitle.text = activity.getString(R.string.offline_library_title)
             binding.miniPlayerMeta.text = activity.getString(R.string.offline_play)
@@ -88,22 +90,26 @@ class MiniPlayerBar(
         }
 
         binding.miniPlayerPlay.isEnabled = true
-        binding.miniPlayerTitle.text = OfflinePlayerService.currentTitle
+        binding.miniPlayerTitle.text = OfflinePlayerService.currentTitle.ifEmpty { saved?.title.orEmpty() }
         binding.root.setOnClickListener {
-            val videoId = OfflinePlayerService.videoId()
-            val account = OfflinePlayerService.account()
+            val videoId = OfflinePlayerService.videoId().ifEmpty { saved?.videoId.orEmpty() }
+            val account = OfflinePlayerService.account().ifEmpty { saved?.account.orEmpty() }
             if (videoId.isNotEmpty() && account.isNotEmpty()) {
                 expand()
             }
         }
-        binding.miniPlayerMeta.text = OfflinePlayerService.currentArtist
-        val art = OfflinePlayerService.artUrl()
+        binding.miniPlayerMeta.text = OfflinePlayerService.currentArtist.ifEmpty { saved?.artist.orEmpty() }
+        val art = OfflinePlayerService.artUrl().ifEmpty { saved?.art.orEmpty() }
         if (art.isNotEmpty()) {
             CoilHelper.loadThumbnail(binding.miniPlayerThumb, art)
         }
         updatePlayIcon()
         handler.removeCallbacks(ticker)
-        handler.post(ticker)
+        if (OfflinePlayerService.isPlaying()) {
+            handler.post(ticker)
+        } else {
+            updateProgress()
+        }
         updateVisibility()
     }
 
@@ -152,8 +158,9 @@ class MiniPlayerBar(
 
     /** Reopen the full screen player on the item that is playing. */
     private fun expand() {
-        val videoId = OfflinePlayerService.videoId()
-        val account = OfflinePlayerService.account()
+        val saved = OfflinePlayerService.savedSession(activity)
+        val videoId = OfflinePlayerService.videoId().ifEmpty { saved?.videoId.orEmpty() }
+        val account = OfflinePlayerService.account().ifEmpty { saved?.account.orEmpty() }
         if (videoId.isEmpty() || account.isEmpty()) return
         activity.startActivity(OfflinePlayerActivity.intent(activity, videoId, account))
     }
