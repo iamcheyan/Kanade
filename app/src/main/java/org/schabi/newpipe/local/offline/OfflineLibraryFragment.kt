@@ -363,6 +363,7 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.offlineSwipeRefresh.isRefreshing = true
         val requested = params.source
         val syncedSources = ArrayList<String>()
+        val syncErrors = ArrayList<String>()
         val work = Single.fromCallable { sourcesFor(requested) }
             .subscribeOn(Schedulers.io())
             .flatMapObservable { sources ->
@@ -392,9 +393,7 @@ class OfflineLibraryFragment : BaseFragment() {
                         syncedSources.add(loaded.source)
                         applyEntries(mergeEntries(entries, loaded.entries))
                     }
-                    if (loaded.errors.isNotEmpty()) {
-                        toast(loaded.errors.joinToString("\n"))
-                    }
+                    syncErrors.addAll(loaded.errors)
                 },
                 { error ->
                     if (!isCurrent(generation)) return@subscribe
@@ -410,6 +409,9 @@ class OfflineLibraryFragment : BaseFragment() {
                 },
                 {
                     if (!isCurrent(generation)) return@subscribe
+                    if (syncErrors.isNotEmpty()) {
+                        toast(syncErrors.joinToString("\n"))
+                    }
                     val accounts = if (requested != null) listOf(requested) else syncedSources
                     queuePendingEntries(accounts, generation)
                 }
@@ -442,8 +444,11 @@ class OfflineLibraryFragment : BaseFragment() {
         if (queuedIds.isEmpty()) {
             finishRefresh()
             schedulePolling()
+            // Everything the sources returned is already on disk or queued.
+            toast(getString(R.string.offline_refresh_up_to_date))
             return
         }
+        announceNewVideos(queuedIds.size)
 
         for (entryIndex in entries.indices) {
             val entry = entries[entryIndex]
@@ -475,6 +480,23 @@ class OfflineLibraryFragment : BaseFragment() {
                 }
             )
         trackLibraryWork(generation, work)
+    }
+
+    /**
+     * Tell the user what a refresh found, before the queue starts moving.
+     *
+     * A toast is used instead of the status overlay so the rows merged a moment
+     * earlier stay visible underneath it.
+     */
+    private fun announceNewVideos(count: Int) {
+        if (!isAdded) return
+        toast(
+            if (count == 1) {
+                getString(R.string.offline_refresh_found_one)
+            } else {
+                getString(R.string.offline_refresh_found, count)
+            }
+        )
     }
 
     private data class SourceLoad(

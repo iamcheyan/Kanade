@@ -92,4 +92,7 @@
     <string name="offline_download_resume">ダウンロードを再開</string>
     <string name="offline_wifi_required">Wi-Fi に接続すると同期とダウンロードができます</string>
     <string name="offline_wifi_required_detail">引っ張って更新すると後で見るを同期して新しい動画をダウンロードするため、モバイルデータでは無効になります。</string>
+    <string name="offline_refresh_up_to_date">最新の状態です</string>
+    <string name="offline_refresh_found">新しい動画 %1$d 件 · ダウンロード中</string>
+    <string name="offline_refresh_found_one">新しい動画 1 件 · ダウンロード中</string>
 </resources>
