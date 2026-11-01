@@ -101,4 +101,18 @@
     <string name="offline_scope_all">すべての動画を表示</string>
     <string name="offline_scope_favorites">お気に入りを表示</string>
     <string name="offline_delete_download">ダウンロードを削除</string>
+
+    <string name="offline_library_service_unavailable">同期サービスが起動していません。videod を起動すると同期やダウンロードを利用できます。保存済みの動画はオフラインで引き続き再生できます。</string>
+
+    <string name="offline_library_file_missing">ローカルファイルが見つかりません。削除はしていません。同期サービスを起動して再ダウンロードしてください。</string>
+
+    <string name="offline_mode_sequential">順序</string>
+
+    <string name="offline_mode_shuffle">シャッフル</string>
+
+    <string name="offline_mode_repeat">1曲リピート</string>
+
+    <string name="offline_audio_only">音声のみ</string>
+
+    <string name="offline_watch_video">動画を見る</string>
 </resources>

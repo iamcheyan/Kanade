@@ -30,6 +30,7 @@ object Migrations {
     const val DB_VER_7 = 7
     const val DB_VER_8 = 8
     const val DB_VER_9 = 9
+    const val DB_VER_10 = 10
 
     private val TAG = Migrations::class.java.getName()
     private val isDebug = MainActivity.DEBUG
@@ -339,6 +340,25 @@ object Migrations {
         connection.execSQL(
             "CREATE UNIQUE INDEX `index_remote_playlists_service_id_url` " +
                 "ON `remote_playlists` (`service_id`, `url`)"
+        )
+    }
+
+    val MIGRATION_9_10 = Migration(DB_VER_9, DB_VER_10) { connection ->
+        connection.execSQL(
+            "CREATE TABLE IF NOT EXISTS `offline_library` (" +
+                "`library_key` TEXT NOT NULL, `video_id` TEXT NOT NULL, " +
+                "`account_id` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                "`thumbnail` TEXT NOT NULL, `duration` INTEGER NOT NULL, " +
+                "`local_path` TEXT NOT NULL, `container` TEXT NOT NULL, " +
+                "`encoding` TEXT NOT NULL, `downloaded_at` TEXT NOT NULL, " +
+                "`remote_missing_since` TEXT NOT NULL, `favorite` INTEGER NOT NULL, " +
+                "`resume_position` INTEGER NOT NULL, `missing` INTEGER NOT NULL, " +
+                "`channel_id` TEXT NOT NULL, `url` TEXT NOT NULL, " +
+                "PRIMARY KEY(`library_key`))"
+        )
+        connection.execSQL(
+            "CREATE UNIQUE INDEX `index_offline_library_account_id_video_id` " +
+                "ON `offline_library` (`account_id`, `video_id`)"
         )
     }
 }

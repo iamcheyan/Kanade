@@ -1,4 +1,5 @@
 package org.schabi.newpipe.local.offline
+import java.io.File
 import java.net.URL
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.intOrNull
@@ -19,7 +20,13 @@ data class OfflineVideo(
     val thumbnail: String,
     val duration: Int,
     val accountId: String,
-    val remoteMissingSince: String = ""
+    val remoteMissingSince: String = "",
+    val path: String = "",
+    val container: String = "",
+    val encoding: String = "",
+    val downloadedAt: String = "",
+    val channelId: String = "",
+    val url: String = ""
 ) {
     val isWatched: Boolean get() = remoteMissingSince.isNotEmpty()
 }
@@ -205,6 +212,39 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             DownloadJob.QUEUED,
             DownloadJob.DOWNLOADING
         )
+    }
+
+    /**
+     * Copy a completed download into app-owned storage.
+     *
+     * videod runs as a different uid, so the app can never open its files
+     * directly; the local HTTP stream is the only sanctioned read path. The
+     * copy is written beside the target and renamed only after the full body
+     * arrived, so a half-written file never becomes playable.
+     */
+    fun copyMediaTo(account: String, videoId: String, destination: File) {
+        destination.parentFile?.mkdirs()
+        val partial = File(destination.parentFile, destination.name + ".partial")
+        val connection = URL("$baseUrl/api/media/$videoId?account_id=$account")
+            .openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 120_000
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) throw IllegalStateException("Media copy failed: HTTP $code")
+            connection.inputStream.use { input ->
+                partial.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+            partial.setReadable(true, true)
+            if (!partial.renameTo(destination)) {
+                throw java.io.IOException("Could not finalize local media file")
+            }
+        } catch (error: Exception) {
+            partial.delete()
+            throw error
+        } finally {
+            connection.disconnect()
+        }
     }
 
     /** Downloaded files for one source. */
@@ -574,7 +614,13 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
             thumbnail = stringField(obj, "thumbnail"),
             duration = intField(obj, "duration"),
             accountId = stringField(obj, "account_id"),
-            remoteMissingSince = stringField(obj, "remote_missing_since")
+            remoteMissingSince = stringField(obj, "remote_missing_since"),
+            path = stringField(obj, "path"),
+            container = stringField(obj, "mode"),
+            encoding = stringField(obj, "quality"),
+            downloadedAt = stringField(obj, "created_at"),
+            channelId = stringField(obj, "channel_id"),
+            url = stringField(obj, "url")
         )
     }
 

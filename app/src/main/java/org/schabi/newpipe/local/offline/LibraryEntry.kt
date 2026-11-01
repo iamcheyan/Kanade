@@ -20,7 +20,14 @@ data class LibraryEntry(
     val remoteMissingSince: String = "",
     val favorite: Boolean = false,
     val resumePosition: Long = 0,
-    val error: String = ""
+    val error: String = "",
+    val localPath: String = "",
+    val container: String = "",
+    val encoding: String = "",
+    val downloadedAt: String = "",
+    val missing: Boolean = false,
+    val channelId: String = "",
+    val url: String = ""
 ) {
     enum class State {
         DOWNLOADED,
@@ -43,6 +50,9 @@ data class LibraryEntry(
 
     /** A row counts as watched when the source list no longer contains it. */
     val isWatched: Boolean get() = remoteMissingSince.isNotEmpty()
+
+    val isPlayable: Boolean get() =
+        state == State.DOWNLOADED && !missing && localPath.isNotEmpty()
 
     /** Favorited rows keep their place in the favorites tab. */
     val isFavorite: Boolean get() = favorite
@@ -71,7 +81,7 @@ fun buildLibraryEntries(
     val latestJob = HashMap<String, DownloadJob>()
     for (job in jobs) {
         if (job.videoId.isEmpty()) continue
-        val key = job.accountId + "/" + job.videoId
+        val key = OfflineLibraryEntity.key(job.accountId, job.videoId)
         val previous = latestJob[key]
         if (previous == null || job.id > previous.id) latestJob[key] = job
     }
@@ -80,7 +90,7 @@ fun buildLibraryEntries(
     val seen = HashSet<String>()
 
     for (video in downloaded) {
-        val key = video.accountId + "/" + video.id
+        val key = OfflineLibraryEntity.key(video.accountId, video.id)
         seen.add(key)
         entries.add(
             LibraryEntry(
@@ -92,13 +102,19 @@ fun buildLibraryEntries(
                 state = LibraryEntry.State.DOWNLOADED,
                 remoteMissingSince = video.remoteMissingSince,
                 favorite = key in favorites,
-                resumePosition = resumeById[video.id] ?: 0L
+                resumePosition = resumeById[video.id] ?: 0L,
+                localPath = video.path,
+                container = video.container,
+                encoding = video.encoding,
+                downloadedAt = video.downloadedAt,
+                channelId = video.channelId,
+                url = video.url
             )
         )
     }
 
     for (item in watchLater) {
-        val key = item.accountId + "/" + item.id
+        val key = OfflineLibraryEntity.key(item.accountId, item.id)
         if (!seen.add(key)) continue
         val job = latestJob[key]
         val state = when (job?.state) {

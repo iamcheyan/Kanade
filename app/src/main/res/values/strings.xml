@@ -1025,4 +1025,18 @@
     <string name="offline_scope_all">Showing all videos</string>
     <string name="offline_scope_favorites">Showing favorites</string>
     <string name="offline_delete_download">Delete download</string>
+
+    <string name="offline_library_service_unavailable">Sync service is not running. Start videod to sync or download; saved videos remain available offline.</string>
+
+    <string name="offline_library_file_missing">Local file is missing. Sync service to download it again; the file was not deleted.</string>
+
+    <string name="offline_mode_sequential">Sequential</string>
+
+    <string name="offline_mode_shuffle">Shuffle</string>
+
+    <string name="offline_mode_repeat">Repeat one</string>
+
+    <string name="offline_audio_only">Audio only</string>
+
+    <string name="offline_watch_video">Watch video</string>
 </resources>

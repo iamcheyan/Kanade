@@ -203,6 +203,52 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun migrateDatabaseFrom9to10CreatesOfflineLibrary() = runTest {
+        val databaseInV9 = testHelper.createDatabase(version = Migrations.DB_VER_9)
+        databaseInV9.execSQL(
+            "CREATE TABLE IF NOT EXISTS `offline_library` (" +
+                "`library_key` TEXT NOT NULL, `video_id` TEXT NOT NULL, " +
+                "`account_id` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                "`thumbnail` TEXT NOT NULL, `duration` INTEGER NOT NULL, " +
+                "`local_path` TEXT NOT NULL, `container` TEXT NOT NULL, " +
+                "`encoding` TEXT NOT NULL, `downloaded_at` TEXT NOT NULL, " +
+                "`remote_missing_since` TEXT NOT NULL, `favorite` INTEGER NOT NULL, " +
+                "`resume_position` INTEGER NOT NULL, `missing` INTEGER NOT NULL, " +
+                "`channel_id` TEXT NOT NULL, `url` TEXT NOT NULL, " +
+                "PRIMARY KEY(`library_key`))"
+        )
+        databaseInV9.execSQL(
+            "CREATE UNIQUE INDEX `index_offline_library_account_id_video_id` " +
+                "ON `offline_library` (`account_id`, `video_id`)"
+        )
+        databaseInV9.close()
+
+        val migrated = testHelper.runMigrationsAndValidate(
+            version = Migrations.DB_VER_10,
+            migrations = listOf(Migrations.MIGRATION_9_10)
+        )
+        migrated.prepare(
+            "INSERT INTO offline_library " +
+                "(library_key, video_id, account_id, title, thumbnail, duration, local_path, " +
+                "container, encoding, downloaded_at, remote_missing_since, favorite, " +
+                "resume_position, missing, channel_id, url) VALUES " +
+                "('youtube/id', 'id', 'youtube', 'title', '', 10, '/tmp/id.mp4', " +
+                "'video', '720p', '', '', 0, 0, 0, '', '')"
+        ).use { it.step() }
+        migrated.prepare(
+            "INSERT INTO offline_library " +
+                "(library_key, video_id, account_id, title, thumbnail, duration, local_path, " +
+                "container, encoding, downloaded_at, remote_missing_since, favorite, " +
+                "resume_position, missing, channel_id, url) VALUES " +
+                "('youtube/id', 'id', 'youtube', 'dup', '', 10, '/tmp/dup.mp4', " +
+                "'video', '720p', '', '', 0, 0, 0, '', '')"
+        ).use { statement ->
+            org.junit.Assert.assertThrows(Exception::class.java) { statement.step() }
+        }
+        migrated.close()
+    }
+
+    @Test
     fun migrateDatabaseFrom8to9() = runTest {
         val databaseInV8 = testHelper.createDatabase(version = Migrations.DB_VER_8)
 

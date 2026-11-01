@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.ui.AspectRatioFrameLayout
 import com.google.android.exoplayer2.ui.PlayerView
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
@@ -43,6 +44,8 @@ class OfflinePlayerActivity : AppCompatActivity() {
 
     private val client = VideodClient()
     private val disposables = CompositeDisposable()
+    private val offlineLibraryDao get() =
+        org.schabi.newpipe.NewPipeDatabase.getInstance(this).offlineLibraryDAO()
 
     private var playerView: PlayerView? = null
     private var titleView: TextView? = null
@@ -59,6 +62,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
     private var currentVideoId: String = ""
     private var currentAccount: String = ""
     private var resumePositionSec: Long = 0
+    private var queueEntries: List<OfflinePlayerService.QueueEntry> = emptyList()
     private var attachAttempts = 0
     private var startedOnce = false
     private var saveProgress = false
@@ -80,13 +84,11 @@ class OfflinePlayerActivity : AppCompatActivity() {
 
         val videoId = intent.getStringExtra(EXTRA_ID).orEmpty()
         val account = intent.getStringExtra(EXTRA_ACCOUNT).orEmpty()
+        val fromStart = intent.getBooleanExtra("from_start", false)
         if (videoId.isEmpty() || account.isEmpty()) {
             finish()
             return
         }
-
-        val streamUrl = VideodClient.DEFAULT_BASE_URL + "/api/media/" + videoId +
-            "?account_id=" + account
 
         buildUi()
         if (isLandscape()) {
@@ -101,7 +103,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
             }
             hideSystemBars(true)
         }
-        loadDetails(client, account, videoId, streamUrl)
+        loadDetails(account, videoId, fromStart)
         bindService(
             Intent(this, OfflinePlayerService::class.java),
             connection,
@@ -403,15 +405,16 @@ class OfflinePlayerActivity : AppCompatActivity() {
         val exo = OfflinePlayerService.player ?: return
         if (currentVideoId.isEmpty() || currentAccount.isEmpty()) return
         val position = exo.currentPosition / 1000
-        val duration = exo.duration / 1000
         if (position <= 0) return
         val id = currentVideoId
         val account = currentAccount
+        // Progress is app-owned: the row must keep its resume point even when
+        // the download service is not running.
         disposables.add(
-            io.reactivex.rxjava3.core.Completable
-                .fromAction { client.saveProgress(account, id, position, duration) }
-                .subscribeOn(Schedulers.io())
-                .subscribe({}, {})
+            Completable.fromAction {
+                OfflineLibraryRepository(offlineLibraryDao)
+                    .updateResumePosition(account, id, position)
+            }.subscribeOn(Schedulers.io()).subscribe({}, {})
         )
     }
 
@@ -499,31 +502,34 @@ class OfflinePlayerActivity : AppCompatActivity() {
      * remote recommendations: this is an offline player, so everything shown
      * is already on disk and playable without a network.
      */
-    private fun loadDetails(
-        client: VideodClient,
-        account: String,
-        videoId: String,
-        streamUrl: String
-    ) {
+    private fun loadDetails(account: String, videoId: String, fromStart: Boolean) {
         currentVideoId = videoId
         currentAccount = account
         disposables.add(
             Single.fromCallable {
-                val library = client.libraryAll()
-                val current = library.firstOrNull { it.id == videoId }
-                // Fetch the saved position before starting playback so the very
-                // first frame already lands where the user stopped.
-                val resume = client.resumePosition(account, videoId)
-                Triple(current, library.filter { it.id != videoId }, resume)
+                val all = OfflineLibraryRepository(offlineLibraryDao).load().filter {
+                    !it.missing && it.isPlayable
+                }
+                val current = all.firstOrNull {
+                    it.videoId == videoId && it.accountId == account && it.isPlayable
+                } ?: throw java.io.FileNotFoundException(getString(R.string.offline_library_file_missing))
+                if (!java.io.File(current.localPath).let { it.isFile && it.canRead() }) {
+                    throw java.io.FileNotFoundException(getString(R.string.offline_library_file_missing))
+                }
+                Triple(
+                    current,
+                    all.filterNot { it.videoId == videoId && it.accountId == account },
+                    current.resumePosition
+                )
             }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     { (current, others, resume) ->
-                        resumePositionSec = resume
-                        titleView?.text = current?.title ?: ""
+                        resumePositionSec = if (fromStart) 0L else resume
+                        titleView?.text = current.title
                         metaView?.text = buildMeta(current)
-                        current?.thumbnail?.let {
+                        current.thumbnail.let {
                             if (it.isNotEmpty()) {
                                 CoilHelper.loadThumbnail(
                                     ImageView(this),
@@ -531,30 +537,43 @@ class OfflinePlayerActivity : AppCompatActivity() {
                                 )
                             }
                         }
-                        if (current != null) {
-                            if (OfflinePlayerService.wantsPlayback()) {
-                                OfflinePlayerService.play(
-                                    this,
-                                    streamUrl,
-                                    current.title,
-                                    Sources.label(account),
-                                    current.thumbnail,
-                                    current.id,
-                                    account
-                                )
-                            } else {
-                                OfflinePlayerService.loadPaused(
-                                    this,
-                                    streamUrl,
-                                    current.title,
-                                    Sources.label(account),
-                                    current.thumbnail,
-                                    current.id,
-                                    account
-                                )
-                            }
-                            applyResumePosition()
+                        if (OfflinePlayerService.wantsPlayback()) {
+                            OfflinePlayerService.play(
+                                this,
+                                Uri.fromFile(java.io.File(current.localPath)).toString(),
+                                current.title,
+                                Sources.label(account),
+                                current.thumbnail,
+                                current.videoId,
+                                account
+                            )
+                        } else {
+                            OfflinePlayerService.loadPaused(
+                                this,
+                                Uri.fromFile(java.io.File(current.localPath)).toString(),
+                                current.title,
+                                Sources.label(account),
+                                current.thumbnail,
+                                current.videoId,
+                                account
+                            )
                         }
+                        applyResumePosition()
+                        // The queue plays app-owned files only, so switching
+                        // items never calls back into videod.
+                        val entries = (listOf(current) + others).map { item ->
+                            OfflinePlayerService.QueueEntry(
+                                item.videoId,
+                                item.accountId,
+                                item.title,
+                                Sources.label(item.accountId),
+                                item.thumbnail,
+                                item.localPath
+                            )
+                        }
+                        queueEntries = entries
+                        OfflinePlayerService.setQueueProvider { _, _, _, _, _ -> entries }
+                        OfflinePlayerService.updateQueue(this@OfflinePlayerActivity, entries, videoId)
                         showSuggestions(others)
                     },
                     { error ->
@@ -565,7 +584,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
         )
     }
 
-    private fun buildMeta(video: OfflineVideo?): String {
+    private fun buildMeta(video: LibraryEntry?): String {
         if (video == null) return ""
         val parts = ArrayList<String>()
         formatDuration(video.duration).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
@@ -575,7 +594,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
     }
 
     /** Fill the list under the player with the other downloaded items. */
-    private fun showSuggestions(items: List<OfflineVideo>) {
+    private fun showSuggestions(items: List<LibraryEntry>) {
         val list = root?.findViewById<RecyclerView>(android.R.id.list) ?: return
         (list.adapter as? HeaderAdapter)?.submit(items)
     }
@@ -588,9 +607,9 @@ class OfflinePlayerActivity : AppCompatActivity() {
      * pinned while the list moves underneath it.
      */
     private inner class HeaderAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-        private val items = ArrayList<OfflineVideo>()
+        private val items = ArrayList<LibraryEntry>()
 
-        fun submit(next: List<OfflineVideo>) {
+        fun submit(next: List<LibraryEntry>) {
             items.clear()
             items.addAll(next)
             notifyDataSetChanged()
@@ -647,7 +666,7 @@ class OfflinePlayerActivity : AppCompatActivity() {
             private val title: TextView,
             private val meta: TextView
         ) : RecyclerView.ViewHolder(row) {
-            fun bind(video: OfflineVideo) {
+            fun bind(video: LibraryEntry) {
                 title.text = video.title
                 meta.text = listOf(formatDuration(video.duration), Sources.label(video.accountId))
                     .filter { it.isNotEmpty() }.joinToString(" · ")
@@ -655,8 +674,29 @@ class OfflinePlayerActivity : AppCompatActivity() {
                     CoilHelper.loadThumbnail(thumb, video.thumbnail)
                 }
                 row.setOnClickListener {
-                    startActivity(intent(this@OfflinePlayerActivity, video.id, video.accountId))
-                    finish()
+                    val local = OfflineLibraryRepository(offlineLibraryDao)
+                        .localFile(video.accountId, video.videoId)
+                        ?: return@setOnClickListener
+                    OfflinePlayerService.updateQueue(
+                        this@OfflinePlayerActivity,
+                        queueEntries,
+                        video.videoId
+                    )
+                    OfflinePlayerService.play(
+                        this@OfflinePlayerActivity,
+                        Uri.fromFile(local).toString(),
+                        video.title,
+                        Sources.label(video.accountId),
+                        video.thumbnail,
+                        video.videoId,
+                        video.accountId
+                    )
+                    currentVideoId = video.videoId
+                    currentAccount = video.accountId
+                    titleView?.text = video.title
+                    metaView?.text = buildMeta(video)
+                    resumePositionSec = video.resumePosition
+                    applyResumePosition()
                 }
             }
         }
@@ -669,11 +709,12 @@ class OfflinePlayerActivity : AppCompatActivity() {
         if (startedOnce && OfflinePlayerService.player == null && currentVideoId.isNotEmpty() &&
             !OfflinePlayerService.wantsPlayback()
         ) {
-            val url = VideodClient.DEFAULT_BASE_URL + "/api/media/" + currentVideoId +
-                "?account_id=" + currentAccount
+            val row = runCatching { offlineLibraryDao.get(currentAccount, currentVideoId) }.getOrNull()
+            val file = row?.let { java.io.File(it.localPath) }
+            if (file?.let { it.isFile && it.canRead() } != true) return
             OfflinePlayerService.loadPaused(
                 this,
-                url,
+                Uri.fromFile(file).toString(),
                 titleView?.text?.toString().orEmpty(),
                 Sources.label(currentAccount),
                 "",

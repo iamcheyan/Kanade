@@ -31,10 +31,12 @@ import org.schabi.newpipe.database.stream.model.StreamEntity
 import org.schabi.newpipe.database.stream.model.StreamStateEntity
 import org.schabi.newpipe.database.subscription.SubscriptionDAO
 import org.schabi.newpipe.database.subscription.SubscriptionEntity
+import org.schabi.newpipe.local.offline.OfflineLibraryDAO
+import org.schabi.newpipe.local.offline.OfflineLibraryEntity
 
 @ColumnTypeConverters(Converters::class)
 @Database(
-    version = Migrations.DB_VER_9,
+    version = Migrations.DB_VER_10,
     entities = [
         SubscriptionEntity::class,
         SearchHistoryEntry::class,
@@ -47,7 +49,8 @@ import org.schabi.newpipe.database.subscription.SubscriptionEntity
         FeedEntity::class,
         FeedGroupEntity::class,
         FeedGroupSubscriptionEntity::class,
-        FeedLastUpdatedEntity::class
+        FeedLastUpdatedEntity::class,
+        OfflineLibraryEntity::class
     ]
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -61,6 +64,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun streamHistoryDAO(): StreamHistoryDAO
     abstract fun streamStateDAO(): StreamStateDAO
     abstract fun subscriptionDAO(): SubscriptionDAO
+    abstract fun offlineLibraryDAO(): OfflineLibraryDAO
 
     companion object {
         const val DATABASE_NAME: String = "newpipe.db"

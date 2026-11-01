@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -17,12 +18,15 @@ import android.os.Looper
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.audio.AudioAttributes
+import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
+import java.io.File
 import java.util.concurrent.CopyOnWriteArraySet
 import org.schabi.newpipe.R
 
@@ -39,6 +43,17 @@ import org.schabi.newpipe.R
  * playback position.
  */
 class OfflinePlayerService : Service() {
+    enum class PlaybackMode { SEQUENTIAL, SHUFFLE, REPEAT_ONE }
+
+    /** One queue row. [localPath] is the app-owned copy this service plays. */
+    data class QueueEntry(
+        val videoId: String,
+        val account: String,
+        val title: String,
+        val artist: String,
+        val art: String,
+        val localPath: String
+    )
 
     /**
      * Called on the main thread whenever the shared player changes in a way a
@@ -72,6 +87,11 @@ class OfflinePlayerService : Service() {
         private const val PREF_ACCOUNT = "account"
         private const val PREF_POSITION = "position"
         private const val PREF_WANTS_PLAYBACK = "wants_playback"
+        private const val PREF_QUEUE = "queue"
+        private const val PREF_QUEUE_INDEX = "queue_index"
+        private const val PREF_MODE = "mode"
+        private const val PREF_AUDIO_ONLY = "audio_only"
+        private const val TAG = "OfflinePlayer"
 
         /**
          * How long a paused player is kept for instant resume: long enough that
@@ -131,6 +151,64 @@ class OfflinePlayerService : Service() {
         @JvmStatic
         var detailVisible: Boolean = false
 
+        @Volatile
+        private var holder: OfflinePlayerService? = null
+
+        @Volatile
+        private var pendingQueue: List<QueueEntry> = emptyList()
+
+        @Volatile
+        private var pendingQueueId: String = ""
+
+        @JvmStatic
+        fun setQueueProvider(provider: (String, String, String, String, String) -> List<QueueEntry>) {
+            queueProvider = provider
+            holder?.queueProvider = provider
+        }
+
+        @Volatile
+        private var queueProvider: ((String, String, String, String, String) -> List<QueueEntry>)? = null
+
+        @JvmStatic
+        fun updateQueue(context: Context, entries: List<QueueEntry>, startId: String) {
+            val active = holder
+            if (active != null) {
+                active.setQueue(entries, startId)
+            } else {
+                pendingQueue = entries
+                pendingQueueId = startId
+                context.startService(Intent(context, OfflinePlayerService::class.java))
+            }
+        }
+
+        @JvmStatic
+        fun provideQueue(id: String, account: String, title: String, artist: String, art: String): List<QueueEntry> = queueProvider?.invoke(id, account, title, artist, art).orEmpty()
+
+        @JvmStatic
+        val activeMode: PlaybackMode get() = holder?.playbackMode ?: PlaybackMode.SEQUENTIAL
+
+        @JvmStatic
+        val activeAudioOnly: Boolean get() = holder?.audioOnly ?: false
+
+        @JvmStatic
+        fun setPlaybackMode(context: Context, mode: PlaybackMode) {
+            val active = holder
+            if (active != null) {
+                active.setMode(context, mode)
+            } else {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREF_MODE, mode.name).apply()
+            }
+        }
+
+        @JvmStatic
+        fun setAudioOnlyMode(context: Context, enabled: Boolean) {
+            val active = holder
+            if (active != null) {
+                active.setAudioOnly(context, enabled)
+            } else {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUDIO_ONLY, enabled).apply()
+            }
+        }
         private val stateListeners = CopyOnWriteArraySet<PlaybackListener>()
         private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -289,6 +367,44 @@ class OfflinePlayerService : Service() {
         }
     }
 
+    var queue: List<QueueEntry> = emptyList()
+        private set
+    var queueIndex: Int = -1
+        private set
+    var playbackMode = PlaybackMode.SEQUENTIAL
+        private set
+    var audioOnly = false
+        private set
+    private var shuffleHistory = mutableListOf<Int>()
+    private var queueProvider: ((String, String, String, String, String) -> List<QueueEntry>)? = null
+    fun setQueue(entries: List<QueueEntry>, startId: String) {
+        queue = entries
+        queueIndex = entries.indexOfFirst { it.videoId == startId }.takeIf { it >= 0 } ?: -1
+        shuffleHistory = mutableListOf(queueIndex)
+        persistQueue()
+    }
+    private fun persistQueue() {
+        val encoded = queue.joinToString("\n") {
+            listOf(it.videoId, it.account, it.title, it.artist, it.art, it.localPath).joinToString("\t")
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_QUEUE, encoded).putInt(PREF_QUEUE_INDEX, queueIndex).apply()
+    }
+    fun setMode(context: Context, mode: PlaybackMode) {
+        playbackMode = mode
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREF_MODE, mode.name).apply()
+    }
+    fun setAudioOnly(context: Context, enabled: Boolean) {
+        audioOnly = enabled
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_AUDIO_ONLY, enabled).apply()
+        val exo = player ?: return
+        val position = exo.currentPosition
+        val playing = exo.playWhenReady
+        (exo.trackSelector as? DefaultTrackSelector)?.setParameters((exo.trackSelector as DefaultTrackSelector).buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, enabled))
+        exo.seekTo(position)
+        exo.playWhenReady = playing
+        handler.removeCallbacks(positionSaver)
+        if (playing) handler.postDelayed(positionSaver, 5000) else savePlaybackPosition()
+    }
     private val binder = LocalBinder()
     private val handler = Handler(Looper.getMainLooper())
     private var mediaSession: MediaSessionCompat? = null
@@ -301,9 +417,28 @@ class OfflinePlayerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        holder = this
+        queueProvider?.let { this.queueProvider = it }
         createChannel()
         setUpMediaSession()
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        queue = prefs.getString(PREF_QUEUE, "").orEmpty().lineSequence().filter { it.isNotEmpty() }.mapNotNull { row ->
+            val fields = row.split('\t')
+            if (fields.size == 6) {
+                QueueEntry(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
+            } else {
+                null
+            }
+        }.toList()
+        queueIndex = prefs.getInt(PREF_QUEUE_INDEX, -1).takeIf { it in queue.indices } ?: -1
+        shuffleHistory = mutableListOf(queueIndex)
+        playbackMode = runCatching { PlaybackMode.valueOf(prefs.getString(PREF_MODE, "SEQUENTIAL")!!) }.getOrDefault(PlaybackMode.SEQUENTIAL)
+        audioOnly = prefs.getBoolean(PREF_AUDIO_ONLY, false)
+        if (pendingQueue.isNotEmpty()) {
+            setQueue(pendingQueue, pendingQueueId)
+            pendingQueue = emptyList()
+            pendingQueueId = ""
+        }
         currentVideoId = prefs.getString(PREF_ID, "").orEmpty()
         if (currentVideoId.isNotEmpty()) {
             currentTitle = prefs.getString(PREF_TITLE, "").orEmpty()
@@ -314,10 +449,86 @@ class OfflinePlayerService : Service() {
         notifyPlaybackChanged()
     }
 
+    fun advance(manual: Boolean) {
+        if (queue.isEmpty()) return
+        val mode = when (playbackMode) {
+            PlaybackMode.SEQUENTIAL -> OfflineQueueNavigator.Mode.SEQUENTIAL
+            PlaybackMode.SHUFFLE -> OfflineQueueNavigator.Mode.SHUFFLE
+            PlaybackMode.REPEAT_ONE -> OfflineQueueNavigator.Mode.REPEAT_ONE
+        }
+        val next = if (manual && playbackMode == PlaybackMode.REPEAT_ONE) {
+            OfflineQueueNavigator.next(queue.size, queueIndex, OfflineQueueNavigator.Mode.SEQUENTIAL, shuffleHistory)
+        } else {
+            OfflineQueueNavigator.next(queue.size, queueIndex, mode, shuffleHistory)
+        }
+        if (next == null) {
+            player?.playWhenReady = false
+            if (!manual) updateNotification()
+            return
+        }
+        queueIndex = next
+        if (playbackMode == PlaybackMode.SHUFFLE) {
+            if (shuffleHistory.size >= queue.size) shuffleHistory.clear()
+            shuffleHistory.add(next)
+        } else if (manual && playbackMode == PlaybackMode.REPEAT_ONE) {
+            shuffleHistory = mutableListOf(next)
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putInt(PREF_QUEUE_INDEX, queueIndex).apply()
+        val item = queue[next]
+        currentVideoId = item.videoId
+        currentAccount = item.account
+        currentTitle = item.title
+        currentArtist = item.artist
+        currentArt = item.art
+        val url = Uri.fromFile(File(item.localPath)).toString()
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putLong(PREF_POSITION, 0L)
+            .putInt(PREF_QUEUE_INDEX, queueIndex).putString(PREF_ID, item.videoId)
+            .putString(PREF_ACCOUNT, item.account).putString(PREF_URL, url)
+            .putString(PREF_TITLE, item.title).putString(PREF_ARTIST, item.artist)
+            .putString(PREF_ART, item.art).apply()
+        val exo = ensurePlayer()
+        exo.setMediaItem(MediaItem.fromUri(url))
+        exo.prepare()
+        exo.playWhenReady = true
+        updateNotification()
+        notifyPlaybackChanged()
+    }
+    fun previous() {
+        val index = if (playbackMode == PlaybackMode.SHUFFLE && shuffleHistory.size > 1) {
+            shuffleHistory.removeAt(shuffleHistory.lastIndex)
+            shuffleHistory.last()
+        } else {
+            OfflineQueueNavigator.previous(queue.size, queueIndex) ?: return
+        }
+        queueIndex = index
+        if (playbackMode != PlaybackMode.SHUFFLE) shuffleHistory = mutableListOf(index)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putInt(PREF_QUEUE_INDEX, queueIndex).putLong(PREF_POSITION, 0L).apply()
+        val item = queue[index]
+        currentVideoId = item.videoId
+        currentAccount = item.account
+        currentTitle = item.title
+        currentArtist = item.artist
+        currentArt = item.art
+        val url = Uri.fromFile(File(item.localPath)).toString()
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putInt(PREF_QUEUE_INDEX, queueIndex)
+            .putLong(PREF_POSITION, 0L).putString(PREF_ID, item.videoId)
+            .putString(PREF_ACCOUNT, item.account).putString(PREF_URL, url)
+            .putString(PREF_TITLE, item.title).putString(PREF_ARTIST, item.artist)
+            .putString(PREF_ART, item.art).apply()
+        val exo = ensurePlayer()
+        exo.setMediaItem(MediaItem.fromUri(url))
+        exo.prepare()
+        exo.playWhenReady = true
+        updateNotification()
+        notifyPlaybackChanged()
+    }
+
     /** The single ExoPlayer instance, created on first use. */
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
-        val exo = ExoPlayer.Builder(this).build()
+        val selector = DefaultTrackSelector(this)
+        selector.setParameters(selector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, audioOnly))
+        val exo = ExoPlayer.Builder(this).setTrackSelector(selector).build()
         // Music content type matters on this device: the FiiO audio HAL keys
         // its power rail off the stream's usage/content pair. Without it the
         // track is reported as CONTENT_TYPE_UNKNOWN and the vendor chain treats
@@ -333,7 +544,12 @@ class OfflinePlayerService : Service() {
         // Offline playback needs no network wake lock.
         exo.setWakeMode(C.WAKE_MODE_LOCAL)
         exo.addListener(object : Player.Listener {
+            override fun onTracksChanged(tracks: com.google.android.exoplayer2.Tracks) {
+                val selected = tracks.groups.any { g -> g.type == C.TRACK_TYPE_VIDEO && (0 until g.length).any { g.isTrackSelected(it) } }
+                Log.i("OfflinePlayer", "audioOnly=$audioOnly selectedVideo=$selected")
+            }
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) advance(false)
                 updateNotification()
                 notifyPlaybackChanged()
             }
@@ -509,6 +725,10 @@ class OfflinePlayerService : Service() {
                 currentVideoId = intent.getStringExtra(EXTRA_ID).orEmpty()
                 currentAccount = intent.getStringExtra(EXTRA_ACCOUNT).orEmpty()
                 val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                queue.indexOfFirst { it.videoId == currentVideoId }.takeIf { it >= 0 }?.let {
+                    queueIndex = it
+                    prefs.edit().putInt(PREF_QUEUE_INDEX, it).apply()
+                }
                 prefs.edit()
                     .putString(PREF_URL, url)
                     .putString(PREF_TITLE, currentTitle)

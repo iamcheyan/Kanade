@@ -117,4 +117,18 @@
     <string name="offline_scope_all">显示全部视频</string>
     <string name="offline_scope_favorites">显示收藏</string>
     <string name="offline_delete_download">删除下载</string>
+
+    <string name="offline_library_service_unavailable">同步服务未运行。启动 videod 后即可同步或下载；已保存的视频仍可离线使用。</string>
+
+    <string name="offline_library_file_missing">本地文件缺失。未删除任何文件；启动同步服务后可重新下载。</string>
+
+    <string name="offline_mode_sequential">顺序</string>
+
+    <string name="offline_mode_shuffle">随机</string>
+
+    <string name="offline_mode_repeat">单集循环</string>
+
+    <string name="offline_audio_only">仅听音频</string>
+
+    <string name="offline_watch_video">看视频</string>
 </resources>

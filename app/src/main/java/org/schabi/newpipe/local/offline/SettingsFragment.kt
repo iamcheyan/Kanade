@@ -697,6 +697,12 @@ class SettingsFragment : BaseFragment() {
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     { (storage, breakdown) ->
+                        val dao = org.schabi.newpipe.NewPipeDatabase
+                            .getInstance(requireContext()).offlineLibraryDAO()
+                        when (scope) {
+                            "watched" -> dao.deleteWatched()
+                            "all" -> dao.deleteAll()
+                        }
                         showStorage(storage)
                         updateWatchedStorage(breakdown)
                         toast(getString(R.string.settings_cleared))

@@ -75,6 +75,12 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private val client = VideodClient()
+
+    /** Room-backed media root; playback never touches the service. */
+    private val appMediaDir get() = java.io.File(requireContext().filesDir, "offline-media")
+    private val offlineLibraryDao get() =
+        org.schabi.newpipe.NewPipeDatabase.getInstance(requireContext()).offlineLibraryDAO()
+    private val offlineLibraryRepository get() = OfflineLibraryRepository(offlineLibraryDao)
     private val disposables = CompositeDisposable()
     private val adapter = OfflineAdapter()
 
@@ -100,6 +106,9 @@ class OfflineLibraryFragment : BaseFragment() {
     private var showWatchedOnly = false
     private var showFavoritesOnly = false
     private var watchedSyncRunning = false
+
+    /** null means not probed yet: local rendering never probes it on startup. */
+    @Volatile private var videodAvailable: Boolean? = null
     private var currentSearchQuery: String = ""
     private var currentSortMode: Int = SORT_DEFAULT
 
@@ -181,7 +190,12 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.offlineSwipeRefresh.setProgressBackgroundColorSchemeColor(0xFF1E222D.toInt())
         binding.offlineSwipeRefresh.setColorSchemeColors(0xFFF1F3F7.toInt(), 0xFF4A80FF.toInt())
         binding.offlineSwipeRefresh.setOnRefreshListener {
-            if (!canSyncNow()) {
+            if (videodAvailable == false) {
+                binding.offlineSwipeRefresh.isRefreshing = false
+                toast(getString(R.string.offline_library_service_unavailable))
+                return@setOnRefreshListener
+            }
+            if (!isOnWifi()) {
                 binding.offlineSwipeRefresh.isRefreshing = false
                 showWifiRequired()
                 return@setOnRefreshListener
@@ -263,16 +277,19 @@ class OfflineLibraryFragment : BaseFragment() {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
-    private fun canSyncNow(): Boolean = isOnWifi()
+    private fun canSyncNow(): Boolean = isOnWifi() && videodAvailable != false
 
     private fun updateRefreshAvailability() {
         if (_binding == null) return
-        binding.offlineSwipeRefresh.isEnabled = canSyncNow()
-        if (!canSyncNow()) binding.offlineSwipeRefresh.isRefreshing = false
+        val available = canSyncNow()
+        binding.offlineSwipeRefresh.isEnabled = available
+        if (!available) binding.offlineSwipeRefresh.isRefreshing = false
     }
 
     private fun onNetworkChanged() {
         if (_binding == null || !isAdded) return
+        // A network change is a new chance to reach videod; do not probe here.
+        if (videodAvailable == false) videodAvailable = null
         activity?.runOnUiThread {
             if (_binding == null) return@runOnUiThread
             updateRefreshAvailability()
@@ -416,7 +433,12 @@ class OfflineLibraryFragment : BaseFragment() {
         params: SyncParams = SyncParams.watchLater(source = currentAccountFilter)
     ) {
         if (watchedSyncRunning) return
-        if (!canSyncNow()) {
+        if (videodAvailable == false) {
+            binding.offlineSwipeRefresh.isRefreshing = false
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
             binding.offlineSwipeRefresh.isRefreshing = false
             showWifiRequired()
             return
@@ -435,7 +457,9 @@ class OfflineLibraryFragment : BaseFragment() {
                         val result = client.sync(
                             SyncParams.watchLater(source = source, autoDownload = false)
                         )
-                        SourceLoad(source, loadEntries(source, includeHistory = false), result.errors)
+                        val refreshed = loadRemoteEntries(source, includeHistory = false)
+                        persistDownloadedEntries(refreshed)
+                        SourceLoad(source, refreshed, result.errors)
                     }
                         .subscribeOn(Schedulers.io())
                         .onErrorReturn { error ->
@@ -454,26 +478,32 @@ class OfflineLibraryFragment : BaseFragment() {
                     if (!isCurrent(generation)) return@subscribe
                     if (loaded.entries != null) {
                         syncedSources.add(loaded.source)
-                        applyEntries(mergeEntries(entries, loaded.entries))
+                        val persisted = loadLocalEntries(loaded.source)
+                            .filter { it.state == LibraryEntry.State.DOWNLOADED }
+                        val merged = mergeEntries(
+                            entries.filterNot { it.accountId == loaded.source },
+                            persisted + loaded.entries.filter {
+                                it.state != LibraryEntry.State.DOWNLOADED
+                            }
+                        )
+                        applyEntries(merged)
                     }
                     syncErrors.addAll(loaded.errors)
                 },
                 { error ->
                     if (!isCurrent(generation)) return@subscribe
                     finishRefresh()
-                    if (entries.isEmpty()) {
-                        showStatus(
-                            getString(R.string.offline_sync_failed),
-                            error.message ?: error.javaClass.simpleName
-                        )
-                    } else {
-                        toast(error.message ?: error.javaClass.simpleName)
-                    }
+                    // A failed sync only affects remote controls; the local rows stay visible.
+                    toast(getString(R.string.offline_library_service_unavailable))
                 },
                 {
                     if (!isCurrent(generation)) return@subscribe
-                    if (syncErrors.isNotEmpty()) {
-                        toast(syncErrors.joinToString("\n"))
+                    if (syncErrors.isEmpty()) {
+                        videodAvailable = true
+                    } else {
+                        videodAvailable = false
+                        updateRefreshAvailability()
+                        toast(getString(R.string.offline_library_service_unavailable))
                     }
                     val accounts = if (requested != null) listOf(requested) else syncedSources
                     queuePendingEntries(accounts, generation)
@@ -500,17 +530,30 @@ class OfflineLibraryFragment : BaseFragment() {
     /** Queue rows that are on the list but not downloaded yet, without reordering them. */
     private fun queuePendingEntries(accounts: List<String>, generation: Int) {
         if (!isCurrent(generation) || _binding == null) return
+        if (!runCatching {
+                client.settings()
+                true
+            }.getOrDefault(false)
+        ) {
+            videodAvailable = false
+            updateRefreshAvailability()
+            finishRefresh()
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
         // Failed rows are retried too: without that, one transient yt-dlp error
         // parks a video forever, because it never returns to PENDING by itself.
         // PAUSED is left alone; that state is the user's decision.
         val pendingByAccount = accounts.distinct().associateWith { account ->
             entries.filter {
-                it.accountId == account && when (it.state) {
-                    LibraryEntry.State.PENDING -> true
+                it.accountId == account && when {
+                    it.state == LibraryEntry.State.DOWNLOADED && it.missing -> true
+
+                    it.state == LibraryEntry.State.PENDING -> true
 
                     // Retry a failure once; a job that failed again is left for
                     // the user to tap, so one dead URL cannot loop forever.
-                    LibraryEntry.State.FAILED -> it.jobId !in retriedJobs
+                    it.state == LibraryEntry.State.FAILED -> it.jobId !in retriedJobs
 
                     else -> false
                 }
@@ -558,8 +601,11 @@ class OfflineLibraryFragment : BaseFragment() {
                 },
                 { error ->
                     if (!isCurrent(generation)) return@subscribe
+                    videodAvailable = false
+                    updateRefreshAvailability()
                     finishRefresh()
-                    toast(error.message ?: error.javaClass.simpleName)
+                    toast(getString(R.string.offline_library_service_unavailable))
+                    loadLibrary()
                 }
             )
         trackLibraryWork(generation, work)
@@ -624,6 +670,14 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun clearWatchedDownloads() {
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
+            showWifiRequired()
+            return
+        }
         binding.clearWatchedButton.isEnabled = false
         disposables.add(
             io.reactivex.rxjava3.core.Single.fromCallable {
@@ -633,6 +687,7 @@ class OfflineLibraryFragment : BaseFragment() {
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     {
+                        offlineLibraryDao.deleteWatched()
                         binding.clearWatchedButton.isEnabled = true
                         loadLibrary()
                     },
@@ -714,9 +769,35 @@ class OfflineLibraryFragment : BaseFragment() {
      * library, the source list and job state each cover different rows, so one
      * being unreachable must not hide the others.
      */
-    private fun loadEntries(source: String?, includeHistory: Boolean = true): List<LibraryEntry> {
+    private fun loadRemoteEntries(source: String?, includeHistory: Boolean = true): List<LibraryEntry> {
         val accounts = if (source != null) listOf(source) else SOURCE_ORDER
-        val downloaded = client.libraryAll()
+        val downloaded = if (source == null) client.libraryAll() else client.library(source)
+        // Move finished service downloads into app storage once; afterwards the
+        // rows are served from Room and never need videod again.
+        offlineLibraryRepository.importDownloaded(
+            downloaded,
+            appMediaDir,
+            copy = { video, target -> client.copyMediaTo(video.accountId, video.id, target) },
+            removeFromService = { video -> client.deleteLibrary(video.accountId, video.id) }
+        )
+        val owned = offlineLibraryDao.getAll()
+            .filter { source == null || it.accountId == source }
+            .map { entity ->
+                OfflineVideo(
+                    id = entity.videoId,
+                    title = entity.title,
+                    thumbnail = entity.thumbnail,
+                    duration = entity.duration,
+                    accountId = entity.accountId,
+                    remoteMissingSince = entity.remoteMissingSince,
+                    path = entity.localPath,
+                    container = entity.container,
+                    encoding = entity.encoding,
+                    downloadedAt = entity.downloadedAt,
+                    channelId = entity.channelId,
+                    url = entity.url
+                )
+            }
 
         val watchLater = ArrayList<WatchLaterItem>()
         val jobs = ArrayList<DownloadJob>()
@@ -739,7 +820,9 @@ class OfflineLibraryFragment : BaseFragment() {
             }
         }
 
-        val visibleDownloads = downloaded.filter { source == null || it.accountId == source }
+        // Only rows the app owns can be listed and played; a service copy that
+        // failed to import is retried by the next sync, not shown as playable.
+        val visibleDownloads = owned
         val resumeById = HashMap<String, Long>()
         if (includeHistory) {
             for (account in accounts) {
@@ -756,7 +839,29 @@ class OfflineLibraryFragment : BaseFragment() {
             progressById.putAll(resumeById)
         }
 
+        val cachedFavorites = offlineLibraryDao.getAll()
+            .filter { source == null || it.accountId == source }
+            .filter { it.favorite }
+            .mapTo(HashSet()) { it.accountId + "/" + it.videoId }
+        favorites.addAll(cachedFavorites)
+        val localResume = offlineLibraryDao.getAll()
+            .filter { source == null || it.accountId == source }
+            .associate { OfflineLibraryEntity.key(it.accountId, it.videoId) to it.resumePosition }
+        for ((key, position) in localResume) {
+            val videoId = key.substringAfter('/')
+            if (position > 0L) resumeById.putIfAbsent(videoId, position)
+        }
         return buildLibraryEntries(visibleDownloads, watchLater, jobs, resumeById, favorites)
+            .map { row ->
+                if (row.state == LibraryEntry.State.DOWNLOADED &&
+                    row.localPath.isNotEmpty() &&
+                    !java.io.File(row.localPath).let { it.isFile && it.canRead() }
+                ) {
+                    row.copy(missing = true)
+                } else {
+                    row
+                }
+            }
     }
 
     /** Replace the rows for the accounts in [fresh], keeping every other row. */
@@ -764,12 +869,12 @@ class OfflineLibraryFragment : BaseFragment() {
         existing: List<LibraryEntry>,
         fresh: List<LibraryEntry>
     ): List<LibraryEntry> {
-        val previous = existing.associateBy { it.accountId + "/" + it.videoId }
+        val previous = existing.associateBy { OfflineLibraryEntity.key(it.accountId, it.videoId) }
         val replaced = fresh.mapTo(HashSet()) { it.accountId }
         val merged = existing.filter { it.accountId !in replaced }.toMutableList()
         merged.addAll(
             fresh.map { row ->
-                val old = previous[row.accountId + "/" + row.videoId]
+                val old = previous[OfflineLibraryEntity.key(row.accountId, row.videoId)]
                 if (old != null && row.resumePosition == 0L && old.resumePosition > 0L) {
                     row.copy(resumePosition = old.resumePosition)
                 } else {
@@ -780,6 +885,29 @@ class OfflineLibraryFragment : BaseFragment() {
         return merged
     }
 
+    private fun persistDownloadedEntries(rows: List<LibraryEntry>) {
+        offlineLibraryRepository.upsertDownloaded(
+            rows.filter { it.state == LibraryEntry.State.DOWNLOADED }.map { row ->
+                OfflineVideo(
+                    id = row.videoId,
+                    title = row.title,
+                    thumbnail = row.thumbnail,
+                    duration = row.duration,
+                    accountId = row.accountId,
+                    remoteMissingSince = row.remoteMissingSince,
+                    path = row.localPath,
+                    container = row.container,
+                    encoding = row.encoding,
+                    downloadedAt = row.downloadedAt,
+                    channelId = row.channelId,
+                    url = row.url
+                )
+            }
+        )
+    }
+
+    private fun loadLocalEntries(source: String?): List<LibraryEntry> = offlineLibraryRepository.load(source)
+
     private fun applyEntries(next: List<LibraryEntry>) {
         entries.clear()
         entries.addAll(next)
@@ -788,28 +916,21 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun loadLibrary() {
-        if (entries.isEmpty() && _binding != null) {
-            showStatus(
-                getString(R.string.offline_library_loading),
-                VideodClient.DEFAULT_BASE_URL
-            )
-        }
         val source = currentAccountFilter
         val generation = beginLoad()
-        val work = Single.fromCallable { loadEntries(source) }
+        val work = Single.fromCallable { loadLocalEntries(source) }
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
             .subscribe(
                 { loaded ->
                     if (!isCurrent(generation)) return@subscribe
-                    applyEntries(if (source == null) loaded else mergeEntries(entries, loaded))
+                    applyEntries(loaded)
                 },
                 { error ->
                     if (!isCurrent(generation)) return@subscribe
-                    showStatus(
-                        getString(R.string.offline_library_unreachable),
-                        error.message ?: error.javaClass.simpleName
-                    )
+                    val local = runCatching { loadLocalEntries(source) }.getOrDefault(emptyList())
+                    applyEntries(local)
+                    toast(error.message ?: error.javaClass.simpleName)
                 }
             )
         trackLibraryWork(generation, work)
@@ -962,10 +1083,35 @@ class OfflineLibraryFragment : BaseFragment() {
                             val key = entry.accountId + "/" + entry.videoId
                             val video = pair.first.firstOrNull { it.id == entry.videoId }
                             if (video != null) {
+                                val local = offlineLibraryRepository.importDownloaded(
+                                    listOf(video),
+                                    appMediaDir,
+                                    copy = { item, target ->
+                                        client.copyMediaTo(item.accountId, item.id, target)
+                                    },
+                                    removeFromService = { item ->
+                                        client.deleteLibrary(item.accountId, item.id)
+                                    }
+                                ).singleOrNull()
+                                if (local == null) {
+                                    entries[index] = entry.copy(
+                                        state = LibraryEntry.State.FAILED,
+                                        progress = 0,
+                                        error = ""
+                                    )
+                                    continue
+                                }
                                 entries[index] = entry.copy(
                                     state = LibraryEntry.State.DOWNLOADED,
                                     progress = 100,
-                                    remoteMissingSince = video.remoteMissingSince,
+                                    remoteMissingSince = local.remoteMissingSince,
+                                    localPath = local.localPath,
+                                    container = local.container,
+                                    encoding = local.encoding,
+                                    downloadedAt = local.downloadedAt,
+                                    channelId = local.channelId,
+                                    url = local.url,
+                                    missing = false,
                                     error = ""
                                 )
                                 unseenPolls.remove(key)
@@ -1086,6 +1232,14 @@ class OfflineLibraryFragment : BaseFragment() {
 
     /** Resume a paused job through videod. */
     private fun resumeDownload(entry: LibraryEntry) {
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
+            showWifiRequired()
+            return
+        }
         disposables.add(
             io.reactivex.rxjava3.core.Single.fromCallable {
                 client.resumeDownload(entry.accountId, entry.jobId)
@@ -1094,13 +1248,7 @@ class OfflineLibraryFragment : BaseFragment() {
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     { loadLibrary() },
-                    { error ->
-                        android.widget.Toast.makeText(
-                            requireContext(),
-                            error.message ?: error.javaClass.simpleName,
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    }
+                    { error -> toast(getString(R.string.offline_library_service_unavailable)) }
                 )
         )
     }
@@ -1108,11 +1256,24 @@ class OfflineLibraryFragment : BaseFragment() {
     /** Queue a row whose file is missing; polling then tracks it. */
     private fun startDownload(entry: LibraryEntry) {
         if (entry.isActive) return
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
+            showWifiRequired()
+            return
+        }
         val index = entries.indexOfFirst {
             it.videoId == entry.videoId && it.accountId == entry.accountId
         }
         if (index >= 0) {
-            entries[index] = entry.copy(state = LibraryEntry.State.QUEUED, error = "")
+            entries[index] = entry.copy(
+                state = LibraryEntry.State.QUEUED,
+                localPath = "",
+                missing = false,
+                error = ""
+            )
             applyFilterAndSort()
             schedulePolling()
         }
@@ -1125,11 +1286,7 @@ class OfflineLibraryFragment : BaseFragment() {
                 .subscribe(
                     { loadLibrary() },
                     { error ->
-                        android.widget.Toast.makeText(
-                            requireContext(),
-                            error.message ?: error.javaClass.simpleName,
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
+                        toast(getString(R.string.offline_library_service_unavailable))
                         loadLibrary()
                     }
                 )
@@ -1137,6 +1294,10 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     private fun play(entry: LibraryEntry, fromStart: Boolean = false) {
+        if (!entry.isPlayable) {
+            toast(getString(R.string.offline_library_file_missing))
+            return
+        }
         try {
             val intent = OfflinePlayerActivity.intent(
                 requireContext(),
@@ -1163,6 +1324,14 @@ class OfflineLibraryFragment : BaseFragment() {
      * queues it exactly like a newly discovered video.
      */
     private fun deleteDownload(entry: LibraryEntry) {
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
         disposables.add(
             io.reactivex.rxjava3.core.Single.fromCallable {
                 client.deleteLibrary(entry.accountId, entry.videoId)
@@ -1176,6 +1345,7 @@ class OfflineLibraryFragment : BaseFragment() {
                         val index = entries.indexOfFirst {
                             it.videoId == entry.videoId && it.accountId == entry.accountId
                         }
+                        offlineLibraryDao.delete(entry.accountId, entry.videoId)
                         if (index >= 0) {
                             val old = entries[index]
                             if (old.jobId > 0L) retriedJobs.remove(old.jobId)
@@ -1183,6 +1353,8 @@ class OfflineLibraryFragment : BaseFragment() {
                                 state = LibraryEntry.State.PENDING,
                                 progress = 0,
                                 jobId = 0L,
+                                localPath = "",
+                                missing = false,
                                 error = ""
                             )
                             syncDisplayedFromEntries()
@@ -1191,28 +1363,33 @@ class OfflineLibraryFragment : BaseFragment() {
                         loadLibrary()
                     },
                     { error ->
-                        showStatus(
-                            getString(R.string.offline_library_delete_failed),
-                            error.message ?: error.javaClass.simpleName
-                        )
+                        toast(getString(R.string.offline_library_service_unavailable))
                     }
                 )
         )
     }
 
     private fun markWatched(entry: LibraryEntry) {
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
         disposables.add(
             io.reactivex.rxjava3.core.Single
                 .fromCallable { client.markWatched(entry.accountId, entry.videoId) }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { loadLibrary() },
+                    {
+                        offlineLibraryDao.get(entry.accountId, entry.videoId)?.let { row ->
+                            offlineLibraryDao.upsert(
+                                listOf(row.copy(remoteMissingSince = System.currentTimeMillis().toString()))
+                            )
+                        }
+                        loadLibrary()
+                    },
                     { error ->
-                        showStatus(
-                            getString(R.string.offline_library_mark_failed),
-                            error.message ?: error.javaClass.simpleName
-                        )
+                        toast(getString(R.string.offline_library_service_unavailable))
                     }
                 )
         )
@@ -1223,12 +1400,21 @@ class OfflineLibraryFragment : BaseFragment() {
      * updated in place: a full reload would scroll the list back to the top.
      */
     private fun toggleFavorite(entry: LibraryEntry) {
+        if (videodAvailable == false) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
+        if (!isOnWifi()) {
+            toast(getString(R.string.offline_library_service_unavailable))
+            return
+        }
         val next = !entry.isFavorite
         val index = entries.indexOfFirst {
             it.videoId == entry.videoId && it.accountId == entry.accountId
         }
         if (index >= 0) {
             entries[index] = entries[index].copy(favorite = next)
+            offlineLibraryRepository.updateFavorite(entry.accountId, entry.videoId, next)
             syncDisplayedFromEntries()
             if (showFavoritesOnly) applyFilterAndSort()
         }
@@ -1245,14 +1431,8 @@ class OfflineLibraryFragment : BaseFragment() {
                 .subscribe(
                     {},
                     { error ->
-                        // Put the row back so the UI does not claim a state the
-                        // service rejected.
-                        if (index >= 0 && index < entries.size) {
-                            entries[index] = entries[index].copy(favorite = !next)
-                            syncDisplayedFromEntries()
-                            applyFilterAndSort()
-                        }
-                        toast(error.message ?: error.javaClass.simpleName)
+                        // The local library remains authoritative while the remote service is offline.
+                        toast(getString(R.string.offline_library_service_unavailable))
                     }
                 )
         )
@@ -1319,6 +1499,7 @@ class OfflineLibraryFragment : BaseFragment() {
 
             fun bind(entry: LibraryEntry) {
                 itemBinding.offlineItemTitle.text = entry.title
+                itemBinding.root.alpha = if (entry.missing) 0.55f else 1f
                 CoilHelper.loadThumbnail(itemBinding.offlineItemThumbnail, entry.thumbnail)
                 bindProgress(entry)
             }
@@ -1369,7 +1550,12 @@ class OfflineLibraryFragment : BaseFragment() {
 
             private fun onRowClick(entry: LibraryEntry) {
                 when (entry.state) {
-                    LibraryEntry.State.DOWNLOADED -> play(entry)
+                    LibraryEntry.State.DOWNLOADED -> if (entry.isPlayable) {
+                        play(entry)
+                    } else {
+                        toast(getString(R.string.offline_library_file_missing))
+                        startDownload(entry)
+                    }
 
                     LibraryEntry.State.PENDING, LibraryEntry.State.FAILED -> startDownload(entry)
 
@@ -1383,9 +1569,11 @@ class OfflineLibraryFragment : BaseFragment() {
             private fun showItemPopupMenu(anchor: View, entry: LibraryEntry) {
                 val popup = PopupMenu(requireContext(), anchor)
                 if (entry.state == LibraryEntry.State.DOWNLOADED) {
-                    popup.menu.add(0, 1, 0, getString(R.string.offline_play))
-                    popup.menu.add(0, 2, 1, getString(R.string.offline_play_from_start))
-                    if (!entry.isWatched) {
+                    if (entry.isPlayable) {
+                        popup.menu.add(0, 1, 0, getString(R.string.offline_play))
+                        popup.menu.add(0, 2, 1, getString(R.string.offline_play_from_start))
+                    }
+                    if (!entry.missing && !entry.isWatched) {
                         popup.menu.add(0, 3, 2, getString(R.string.offline_mark_watched))
                     }
                 } else {
@@ -1403,23 +1591,27 @@ class OfflineLibraryFragment : BaseFragment() {
                     )
                 }
 
-                popup.menu.add(
-                    0,
-                    7,
-                    if (entry.state == LibraryEntry.State.DOWNLOADED) 3 else 1,
-                    getString(
-                        if (entry.isFavorite) {
-                            R.string.offline_favorite_remove
-                        } else {
-                            R.string.offline_favorite_add
-                        }
+                if (entry.state != LibraryEntry.State.DOWNLOADED || !entry.missing) {
+                    popup.menu.add(
+                        0,
+                        7,
+                        if (entry.state == LibraryEntry.State.DOWNLOADED) 3 else 1,
+                        getString(
+                            if (entry.isFavorite) {
+                                R.string.offline_favorite_remove
+                            } else {
+                                R.string.offline_favorite_add
+                            }
+                        )
                     )
-                )
+                }
 
                 // Deleting is how a half-broken download is cleared, and how a
                 // test run resets a video so the next refresh queues it again.
-                if (entry.state != LibraryEntry.State.QUEUED &&
-                    entry.state != LibraryEntry.State.ACTIVE
+                if (entry.missing || (
+                        entry.state != LibraryEntry.State.QUEUED &&
+                            entry.state != LibraryEntry.State.ACTIVE
+                        )
                 ) {
                     popup.menu.add(0, 4, 4, getString(R.string.offline_delete_download))
                 }
