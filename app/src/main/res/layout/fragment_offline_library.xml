@@ -130,14 +130,15 @@
             </FrameLayout>
         </LinearLayout>
 
-        <!-- Tabs stay pinned; only the title row above scrolls away. -->
+        <!-- Scrolls away with the title row: scrolling up hides the whole chrome. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
-            android:paddingBottom="10dp">
+            android:paddingBottom="10dp"
+            app:layout_scrollFlags="scroll|snap|enterAlways">
 
             <!-- Category Tabs Row (All / Bilibili / YouTube / Watched) -->
             <HorizontalScrollView

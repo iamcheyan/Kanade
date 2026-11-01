@@ -516,7 +516,8 @@ class OfflinePlayerService : Service() {
                     .putString(PREF_ART, currentArt)
                     .putString(PREF_ID, currentVideoId)
                     .putString(PREF_ACCOUNT, currentAccount)
-                    .putLong(PREF_POSITION, 0L)
+                    // Keep PREF_POSITION: it is the resume point, and zeroing it
+                    // here made every remount start from the beginning.
                     .apply()
                 startPlayback(url)
                 notifyPlaybackChanged()
@@ -612,6 +613,8 @@ class OfflinePlayerService : Service() {
         if (url.isEmpty()) return
         val existing = player
         if (existing != null && existing.currentMediaItem?.localConfiguration?.uri.toString() == url) {
+            // Same item already loaded: resume where it actually is. Re-preparing
+            // would jump back to PREF_POSITION and lose the current position.
             setWantsPlayback(true)
             existing.playWhenReady = true
             promoteForeground()
