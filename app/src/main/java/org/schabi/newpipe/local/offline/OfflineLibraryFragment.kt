@@ -83,6 +83,7 @@ class OfflineLibraryFragment : BaseFragment() {
     private val progressById = HashMap<String, Long>()
     private val pollingHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pollTask: Runnable? = null
+    private val refreshResultHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var isPageResumed = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var libraryWork: Disposable? = null
@@ -115,6 +116,9 @@ class OfflineLibraryFragment : BaseFragment() {
         private const val POLL_INTERVAL_MS = 2_000L
 
         private const val PAYLOAD_PROGRESS = "progress"
+
+        /** How long the refresh summary stays before collapsing. */
+        private const val REFRESH_RESULT_MS = 4_000L
 
         fun newInstance(account: String?): OfflineLibraryFragment = OfflineLibraryFragment().apply {
             arguments = Bundle().apply {
@@ -207,6 +211,7 @@ class OfflineLibraryFragment : BaseFragment() {
             runCatching { connectivityManager.unregisterNetworkCallback(it) }
         }
         networkCallback = null
+        refreshResultHandler.removeCallbacks(collapseRefreshResult)
         libraryWork?.dispose()
         libraryWork = null
         disposables.clear()
@@ -445,7 +450,7 @@ class OfflineLibraryFragment : BaseFragment() {
             finishRefresh()
             schedulePolling()
             // Everything the sources returned is already on disk or queued.
-            toast(getString(R.string.offline_refresh_up_to_date))
+            showRefreshResult(getString(R.string.offline_refresh_up_to_date))
             return
         }
         announceNewVideos(queuedIds.size)
@@ -483,20 +488,46 @@ class OfflineLibraryFragment : BaseFragment() {
     }
 
     /**
-     * Tell the user what a refresh found, before the queue starts moving.
+     * Show what a refresh found above the list, then collapse it.
      *
-     * A toast is used instead of the status overlay so the rows merged a moment
-     * earlier stay visible underneath it.
+     * The strip is used instead of a toast so the outcome survives long enough
+     * to read while new rows animate in underneath.
      */
     private fun announceNewVideos(count: Int) {
-        if (!isAdded) return
-        toast(
+        showRefreshResult(
             if (count == 1) {
                 getString(R.string.offline_refresh_found_one)
             } else {
                 getString(R.string.offline_refresh_found, count)
             }
         )
+    }
+
+    private fun showRefreshResult(message: String) {
+        if (_binding == null) return
+        val bar = binding.refreshResult
+        binding.refreshResultText.text = message
+        refreshResultHandler.removeCallbacks(collapseRefreshResult)
+        if (bar.visibility != View.VISIBLE) {
+            bar.visibility = View.VISIBLE
+            bar.alpha = 0f
+            bar.translationY = -bar.resources.displayMetrics.density * 8f
+            bar.animate().alpha(1f).translationY(0f).setDuration(180).start()
+        }
+        refreshResultHandler.postDelayed(collapseRefreshResult, REFRESH_RESULT_MS)
+    }
+
+    private val collapseRefreshResult = Runnable {
+        if (_binding == null) return@Runnable
+        val bar = binding.refreshResult
+        bar.animate()
+            .alpha(0f)
+            .translationY(-bar.resources.displayMetrics.density * 8f)
+            .setDuration(160)
+            .withEndAction {
+                if (_binding != null) binding.refreshResult.visibility = View.GONE
+            }
+            .start()
     }
 
     private data class SourceLoad(
