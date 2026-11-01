@@ -1024,4 +1024,5 @@
     <string name="offline_favorite_remove">Remove from favorites</string>
     <string name="offline_scope_all">Showing all videos</string>
     <string name="offline_scope_favorites">Showing favorites</string>
+    <string name="offline_delete_download">Delete download</string>
 </resources>

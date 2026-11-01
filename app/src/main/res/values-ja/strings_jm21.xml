@@ -100,4 +100,5 @@
     <string name="offline_favorite_remove">お気に入りから削除</string>
     <string name="offline_scope_all">すべての動画を表示</string>
     <string name="offline_scope_favorites">お気に入りを表示</string>
+    <string name="offline_delete_download">ダウンロードを削除</string>
 </resources>

@@ -1155,6 +1155,13 @@ class OfflineLibraryFragment : BaseFragment() {
         }
     }
 
+    /**
+     * Remove a download (and its job history) so the video can be fetched again.
+     *
+     * Used both to clear a half-broken file and to reset a video during
+     * testing: after this the row is back to PENDING, and the next refresh
+     * queues it exactly like a newly discovered video.
+     */
     private fun deleteDownload(entry: LibraryEntry) {
         disposables.add(
             io.reactivex.rxjava3.core.Single.fromCallable {
@@ -1163,7 +1170,26 @@ class OfflineLibraryFragment : BaseFragment() {
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { loadLibrary() },
+                    {
+                        // Forget the retry bookkeeping for this video, otherwise
+                        // the "already retried once" guard would skip it.
+                        val index = entries.indexOfFirst {
+                            it.videoId == entry.videoId && it.accountId == entry.accountId
+                        }
+                        if (index >= 0) {
+                            val old = entries[index]
+                            if (old.jobId > 0L) retriedJobs.remove(old.jobId)
+                            entries[index] = old.copy(
+                                state = LibraryEntry.State.PENDING,
+                                progress = 0,
+                                jobId = 0L,
+                                error = ""
+                            )
+                            syncDisplayedFromEntries()
+                            applyFilterAndSort()
+                        }
+                        loadLibrary()
+                    },
                     { error ->
                         showStatus(
                             getString(R.string.offline_library_delete_failed),
@@ -1390,11 +1416,20 @@ class OfflineLibraryFragment : BaseFragment() {
                     )
                 )
 
+                // Deleting is how a half-broken download is cleared, and how a
+                // test run resets a video so the next refresh queues it again.
+                if (entry.state != LibraryEntry.State.QUEUED &&
+                    entry.state != LibraryEntry.State.ACTIVE
+                ) {
+                    popup.menu.add(0, 4, 4, getString(R.string.offline_delete_download))
+                }
+
                 popup.setOnMenuItemClickListener { menuItem ->
                     when (menuItem.itemId) {
                         1 -> play(entry, false)
                         2 -> play(entry, true)
                         3 -> markWatched(entry)
+                        4 -> deleteDownload(entry)
                         5 -> startDownload(entry)
                         6 -> resumeDownload(entry)
                         7 -> toggleFavorite(entry)

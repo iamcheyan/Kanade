@@ -114,7 +114,11 @@ func (s *Service) DeleteDownload(ctx context.Context, account, videoID string) (
 	} else {
 		removed = true
 	}
-	if _, err = s.db.ExecContext(ctx, `DELETE FROM downloads WHERE account_id=? AND video_id=? AND state='completed'`, account, videoID); err != nil {
+	// Drop every row for this video, not just the completed one. A leftover
+	// failed job would otherwise make the app treat the video as "already
+	// tried" and never queue it again, which breaks both the retry button and
+	// the delete-then-resync workflow.
+	if _, err = s.db.ExecContext(ctx, `DELETE FROM downloads WHERE account_id=? AND video_id=?`, account, videoID); err != nil {
 		return removed, err
 	}
 	return removed, nil

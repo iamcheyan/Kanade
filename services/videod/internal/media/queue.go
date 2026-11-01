@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func (s *Service) concurrency(accountID string) int {
@@ -114,15 +115,31 @@ func downloadFormat(j *job) string {
 //
 // Returns (true, true) when the retry was started, and (false, false) when the
 // job cannot be retried (already anonymous, or no cookie file).
-func (s *Service) retryWithoutCookies(j *job) (bool, bool) {
-	if j.AccountID != "youtube" {
-		return false, false
+// hasAudioOnlyWithoutCookies reports whether the anonymous player response
+// exposes an audio-only stream. That distinguishes "the cookie session broke
+// format selection" from "the video has no audio at all / is gone".
+func (s *Service) hasAudioOnlyWithoutCookies(j *job) bool {
+	if j.AccountID != "youtube" || j.URL == "" {
+		return false
 	}
-	dataDir := filepath.Dir(s.cfg.DownloadDir)
-	cookiePath := filepath.Join(dataDir, "cookies.txt")
-	if _, err := os.Stat(cookiePath); err != nil {
-		return false, false
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.cfg.YtDlpPath,
+		"--no-warnings", "--skip-download", "--list-formats", j.URL)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
 	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "audio only") {
+			return true
+		}
+	}
+	return false
+}
+
+// retryWithoutCookies requeues the job so the next attempt skips the cookie jar.
+func (s *Service) retryWithoutCookies(j *job) bool {
 	s.mu.Lock()
 	j.State = "queued"
 	j.Progress = 0
@@ -130,10 +147,10 @@ func (s *Service) retryWithoutCookies(j *job) (bool, bool) {
 	j.anonymous = true
 	s.mu.Unlock()
 	if err := s.persistLocked(j); err != nil {
-		return false, false
+		return false
 	}
 	s.kick()
-	return true, true
+	return true
 }
 
 func (s *Service) run(ctx context.Context, j *job) {
@@ -230,20 +247,16 @@ func (s *Service) run(ctx context.Context, j *job) {
 		if msg == "" {
 			msg = "yt-dlp download failed"
 		}
-		if strings.Contains(msg, "Requested format is not available") && j.AccountID == "youtube" {
-			// A signed-in cookie jar can make YouTube answer with a player
-			// response that has video-only formats, so "bestvideo+bestaudio"
-			// has no audio to pair with. Public playback still works, so retry
-			// once without the jar before giving up.
-			if retried, ok := s.retryWithoutCookies(j); ok {
-				if retried {
-					msg = ""
-				}
+		// A signed-in cookie jar can make YouTube answer with a player response
+		// that has video-only formats, so "bestvideo+bestaudio" has no audio to
+		// pair with. Only retry when that is provably the cause: a video that is
+		// genuinely gone would otherwise cost a second failed attempt.
+		if strings.Contains(msg, "Requested format is not available") && s.hasAudioOnlyWithoutCookies(j) {
+			if retried := s.retryWithoutCookies(j); retried {
+				return
 			}
 		}
-		if msg != "" {
-			s.finish(j, "failed", errors.New(msg))
-		}
+		s.finish(j, "failed", errors.New(msg))
 		return
 	}
 	j.OutputPath = outputPath

@@ -130,8 +130,14 @@ func (s *Service) historyEntries(r *http.Request, account string) ([]historyEntr
 func pageParams(r *http.Request) (int, int) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if limit < 1 || limit > 100 {
+	// Clamp instead of silently falling back to the default page size: a caller
+	// asking for more than the cap still gets the largest page we serve, rather
+	// than 20 rows it did not ask for.
+	if limit < 1 {
 		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
