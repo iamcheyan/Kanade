@@ -114,4 +114,6 @@
     <string name="offline_favorites_empty">还没有收藏</string>
     <string name="offline_favorite_add">加入收藏</string>
     <string name="offline_favorite_remove">取消收藏</string>
+    <string name="offline_scope_all">显示全部视频</string>
+    <string name="offline_scope_favorites">显示收藏</string>
 </resources>

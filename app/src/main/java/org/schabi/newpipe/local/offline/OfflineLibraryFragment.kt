@@ -118,6 +118,9 @@ class OfflineLibraryFragment : BaseFragment() {
 
         private const val PAYLOAD_PROGRESS = "progress"
 
+        private const val PREFS_SCOPE = "offline_library_scope"
+        private const val PREF_FAVORITES_ONLY = "favorites_only"
+
         /** How long the refresh summary stays before collapsing. */
         private const val REFRESH_RESULT_MS = 4_000L
 
@@ -162,9 +165,11 @@ class OfflineLibraryFragment : BaseFragment() {
         // Both sources are selected by default.
 
         setupInsets()
+        restoreFavoritesScope()
         setupHeaderActions()
         setupTabs()
         setupSearch()
+        updateScopeButton()
 
         binding.offlineList.layoutManager = LinearLayoutManager(requireContext())
         binding.offlineList.adapter = adapter
@@ -310,38 +315,34 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.btnSort.setOnClickListener {
             showSortMenu()
         }
+
+        binding.btnScope.setOnClickListener {
+            showFavoritesOnly = !showFavoritesOnly
+            persistFavoritesScope()
+            updateScopeButton()
+            applyFilterAndSort()
+        }
     }
 
     private fun setupTabs() {
         binding.tabAll.setOnClickListener { selectTab(null) }
         binding.tabBilibili.setOnClickListener { selectTab(Sources.BILIBILI) }
         binding.tabYoutube.setOnClickListener { selectTab(Sources.YOUTUBE) }
-        binding.tabFavorites.setOnClickListener { selectFavoritesTab() }
         binding.tabWatched.setOnClickListener { selectWatchedTab() }
         binding.clearWatchedButton.setOnClickListener { confirmClearWatched() }
         updateTabsUI()
     }
 
     private fun selectTab(account: String?) {
-        if (currentAccountFilter == account && !showWatchedOnly && !showFavoritesOnly) return
+        if (currentAccountFilter == account && !showWatchedOnly) return
         currentAccountFilter = account
         showWatchedOnly = false
-        showFavoritesOnly = false
-        updateTabsUI()
-        applyFilterAndSort()
-    }
-
-    private fun selectFavoritesTab() {
-        currentAccountFilter = null
-        showWatchedOnly = false
-        showFavoritesOnly = true
         updateTabsUI()
         applyFilterAndSort()
     }
 
     private fun selectWatchedTab() {
         currentAccountFilter = null
-        showFavoritesOnly = false
         showWatchedOnly = true
         updateTabsUI()
         applyFilterAndSort()
@@ -357,10 +358,9 @@ class OfflineLibraryFragment : BaseFragment() {
             tv.typeface = if (isSelected) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
         }
 
-        setPill(binding.tabAll, selectedTab == null && !showWatchedOnly && !showFavoritesOnly)
-        setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI && !showWatchedOnly && !showFavoritesOnly)
-        setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE && !showWatchedOnly && !showFavoritesOnly)
-        setPill(binding.tabFavorites, showFavoritesOnly)
+        setPill(binding.tabAll, selectedTab == null && !showWatchedOnly)
+        setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI && !showWatchedOnly)
+        setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE && !showWatchedOnly)
         setPill(binding.tabWatched, showWatchedOnly)
         updateClearWatchedButton()
     }
@@ -373,6 +373,36 @@ class OfflineLibraryFragment : BaseFragment() {
         val hasWatched = entries.any { it.isWatched }
         binding.clearWatchedButton.visibility =
             if (showWatchedOnly && hasWatched) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * Mirror the all/favorites scope on the header button so the current mode
+     * is readable without opening anything.
+     */
+    private fun updateScopeButton() {
+        binding.btnScope.setImageResource(
+            if (showFavoritesOnly) R.drawable.ic_favorite else R.drawable.ic_stars
+        )
+        binding.btnScope.contentDescription = getString(
+            if (showFavoritesOnly) R.string.offline_scope_favorites else R.string.offline_scope_all
+        )
+        binding.btnScope.setColorFilter(
+            if (showFavoritesOnly) 0xFF38BDF8.toInt() else 0xFFD0D3DC.toInt()
+        )
+    }
+
+    /** The scope survives restarts so a user who only wants favorites keeps it. */
+    private fun persistFavoritesScope() {
+        requireContext().getSharedPreferences(PREFS_SCOPE, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_FAVORITES_ONLY, showFavoritesOnly)
+            .apply()
+    }
+
+    private fun restoreFavoritesScope() {
+        showFavoritesOnly = requireContext()
+            .getSharedPreferences(PREFS_SCOPE, Context.MODE_PRIVATE)
+            .getBoolean(PREF_FAVORITES_ONLY, false)
     }
 
     /**

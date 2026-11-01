@@ -1022,4 +1022,6 @@
     <string name="offline_favorites_empty">No favorites yet</string>
     <string name="offline_favorite_add">Add to favorites</string>
     <string name="offline_favorite_remove">Remove from favorites</string>
+    <string name="offline_scope_all">Showing all videos</string>
+    <string name="offline_scope_favorites">Showing favorites</string>
 </resources>
