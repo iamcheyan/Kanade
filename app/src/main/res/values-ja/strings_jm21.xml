@@ -56,7 +56,6 @@
     <string name="offline_watched_badge">既読</string>
     <string name="sort_unwatched_first">未視聴を優先</string>
     <string name="sort_watched_first">視聴済みを優先</string>
-    <string name="settings_status">状態</string>
     <string name="settings_connected">サービスに接続済み</string>
     <string name="settings_saved">保存しました</string>
     <string name="settings_syncing">同期中…</string>

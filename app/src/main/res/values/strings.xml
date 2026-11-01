@@ -946,7 +946,6 @@
     <string name="offline_mark_watched">Mark watched and remove</string>
     <string name="offline_remove_from_library">Delete local download</string>
     <string name="offline_library_delete_failed">Could not delete download</string>
-    <string name="settings_status">Status</string>
     <string name="settings_connected">Connected to the service</string>
     <string name="settings_saved">Saved</string>
     <string name="settings_syncing">Syncing…</string>

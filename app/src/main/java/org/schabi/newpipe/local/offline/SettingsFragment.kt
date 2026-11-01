@@ -48,7 +48,6 @@ class SettingsFragment : BaseFragment() {
     private var syncProgress: ProgressBar? = null
     private var syncButton: TextView? = null
     private var syncRunning = false
-    private var statusText: TextView? = null
     private var currentSyncStage: String = ""
     private var currentChoice: TextView? = null
     private var clearWatchedButton: TextView? = null
@@ -72,7 +71,10 @@ class SettingsFragment : BaseFragment() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val density = resources.displayMetrics.density
             val top = bars.top + (56 * density).toInt()
-            val bottom = bars.bottom + (8 * density).toInt()
+            // Leave room for the floating mini player as well as the navigation
+            // bar, so the last rows are not covered by it.
+            val miniPlayer = (66 * density).toInt()
+            val bottom = bars.bottom + miniPlayer + (16 * density).toInt()
             scrollView.setPadding(
                 scrollView.paddingLeft,
                 top,
@@ -90,7 +92,6 @@ class SettingsFragment : BaseFragment() {
         syncButton = null
         syncProgress = null
         syncDetails = null
-        statusText = null
         storageText = null
         clearWatchedButton = null
         _binding = null
@@ -194,9 +195,6 @@ class SettingsFragment : BaseFragment() {
                 .show()
         }
         addButton(column, getString(R.string.settings_clear_all)) { clear("all") }
-
-        addSection(column, "")
-        statusText = addValue(column, getString(R.string.settings_status), "")
     }
 
     private fun addSection(parent: LinearLayout, title: String) {
@@ -327,6 +325,20 @@ class SettingsFragment : BaseFragment() {
         return button
     }
 
+    /**
+     * Settings used to report through a permanent status row, which said
+     * nothing once the screen was idle. Failures and confirmations are now
+     * transient, so the row could go away.
+     */
+    private fun toast(message: String) {
+        if (!isAdded || _binding == null) return
+        android.widget.Toast.makeText(
+            requireContext(),
+            message,
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private fun addValue(parent: LinearLayout, label: String, value: String): TextView {
         // Stacked, not side by side: a value such as "233 files, 10.1 GB
         // (47 orphans, 940 MB)" is wider than half the screen in most
@@ -371,11 +383,9 @@ class SettingsFragment : BaseFragment() {
                         applySettings(settings)
                         showStorage(storage)
                         updateWatchedStorage(breakdown)
-                        statusText?.text = getString(R.string.settings_connected)
+                        toast(getString(R.string.settings_saved))
                     },
-                    { error ->
-                        statusText?.text = error.message ?: error.javaClass.simpleName
-                    }
+                    { error -> toast(error.message ?: error.javaClass.simpleName) }
                 )
         )
     }
@@ -423,10 +433,8 @@ class SettingsFragment : BaseFragment() {
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
-                    { statusText?.text = getString(R.string.settings_saved) },
-                    { error ->
-                        statusText?.text = error.message ?: error.javaClass.simpleName
-                    }
+                    { toast(getString(R.string.settings_saved)) },
+                    { error -> toast(error.message ?: error.javaClass.simpleName) }
                 )
         )
     }
@@ -446,7 +454,6 @@ class SettingsFragment : BaseFragment() {
             visibility = View.VISIBLE
             text = currentSyncStage
         }
-        statusText?.text = getString(R.string.settings_syncing)
 
         val startedAt = System.nanoTime()
         disposables.add(
@@ -589,7 +596,6 @@ class SettingsFragment : BaseFragment() {
                         showStorage(storage)
                         updateWatchedStorage(breakdown)
                         currentSyncStage = getString(R.string.settings_sync_complete)
-                        statusText?.text = currentSyncStage
                         finishSync()
                     },
                     { error -> showSyncFailure(error) }
@@ -607,7 +613,6 @@ class SettingsFragment : BaseFragment() {
                     error.message ?: error.javaClass.simpleName
                 )
             )
-            statusText?.text = getString(R.string.settings_sync_failed)
         }
         finishSync()
     }
@@ -670,11 +675,9 @@ class SettingsFragment : BaseFragment() {
                     { (storage, breakdown) ->
                         showStorage(storage)
                         updateWatchedStorage(breakdown)
-                        statusText?.text = getString(R.string.settings_cleared)
+                        toast(getString(R.string.settings_cleared))
                     },
-                    { error ->
-                        statusText?.text = error.message ?: error.javaClass.simpleName
-                    }
+                    { error -> toast(error.message ?: error.javaClass.simpleName) }
                 )
         )
     }

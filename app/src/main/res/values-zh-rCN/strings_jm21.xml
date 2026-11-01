@@ -56,7 +56,6 @@
     <string name="offline_watched_badge">已看</string>
     <string name="sort_unwatched_first">未看优先</string>
     <string name="sort_watched_first">已看优先</string>
-    <string name="settings_status">状态</string>
     <string name="settings_connected">已连接服务</string>
     <string name="settings_saved">已保存</string>
     <string name="settings_syncing">正在同步…</string>

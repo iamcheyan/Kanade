@@ -288,7 +288,9 @@ class OfflineLibraryFragment : BaseFragment() {
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.offlineList) { list, insets ->
             val bottomInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
-            val baseBottom = (96 * resources.displayMetrics.density).toInt()
+            // The list sits inside a weighted column that already ends above the
+            // mini player, so only the navigation bar needs clearing here.
+            val baseBottom = (12 * resources.displayMetrics.density).toInt()
             list.setPadding(
                 list.paddingLeft,
                 list.paddingTop,
@@ -347,7 +349,17 @@ class OfflineLibraryFragment : BaseFragment() {
         setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI && !showWatchedOnly)
         setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE && !showWatchedOnly)
         setPill(binding.tabWatched, showWatchedOnly)
-        binding.clearWatchedButton.visibility = if (showWatchedOnly) View.VISIBLE else View.GONE
+        updateClearWatchedButton()
+    }
+
+    /**
+     * The "delete all watched" action only makes sense on the watched tab and
+     * only while at least one watched row exists; otherwise it is a dead button.
+     */
+    private fun updateClearWatchedButton() {
+        val hasWatched = entries.any { it.isWatched }
+        binding.clearWatchedButton.visibility =
+            if (showWatchedOnly && hasWatched) View.VISIBLE else View.GONE
     }
 
     /**
@@ -793,6 +805,7 @@ class OfflineLibraryFragment : BaseFragment() {
             hideStatus()
             adapter.submit(displayedEntries)
         }
+        updateClearWatchedButton()
     }
 
     private fun showStatus(title: String, detail: String) {
