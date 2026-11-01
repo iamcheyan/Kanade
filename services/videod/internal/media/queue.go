@@ -110,6 +110,32 @@ func downloadFormat(j *job) string {
 	}
 }
 
+// retryWithoutCookies re-runs the job with the anonymous player response.
+//
+// Returns (true, true) when the retry was started, and (false, false) when the
+// job cannot be retried (already anonymous, or no cookie file).
+func (s *Service) retryWithoutCookies(j *job) (bool, bool) {
+	if j.AccountID != "youtube" {
+		return false, false
+	}
+	dataDir := filepath.Dir(s.cfg.DownloadDir)
+	cookiePath := filepath.Join(dataDir, "cookies.txt")
+	if _, err := os.Stat(cookiePath); err != nil {
+		return false, false
+	}
+	s.mu.Lock()
+	j.State = "queued"
+	j.Progress = 0
+	j.Error = ""
+	j.anonymous = true
+	s.mu.Unlock()
+	if err := s.persistLocked(j); err != nil {
+		return false, false
+	}
+	s.kick()
+	return true, true
+}
+
 func (s *Service) run(ctx context.Context, j *job) {
 	if err := os.MkdirAll(s.cfg.DownloadDir, 0750); err != nil {
 		s.finish(j, "failed", err)
@@ -124,7 +150,7 @@ func (s *Service) run(ctx context.Context, j *job) {
 		cookieFile = "bilibili-cookies.txt"
 	}
 	cookiePath := filepath.Join(dataDir, cookieFile)
-	if _, err := os.Stat(cookiePath); err == nil {
+	if _, err := os.Stat(cookiePath); err == nil && !j.anonymous {
 		args = append(args, "--cookies", cookiePath)
 	}
 	args = append(args, j.URL)
@@ -204,7 +230,20 @@ func (s *Service) run(ctx context.Context, j *job) {
 		if msg == "" {
 			msg = "yt-dlp download failed"
 		}
-		s.finish(j, "failed", errors.New(msg))
+		if strings.Contains(msg, "Requested format is not available") && j.AccountID == "youtube" {
+			// A signed-in cookie jar can make YouTube answer with a player
+			// response that has video-only formats, so "bestvideo+bestaudio"
+			// has no audio to pair with. Public playback still works, so retry
+			// once without the jar before giving up.
+			if retried, ok := s.retryWithoutCookies(j); ok {
+				if retried {
+					msg = ""
+				}
+			}
+		}
+		if msg != "" {
+			s.finish(j, "failed", errors.New(msg))
+		}
 		return
 	}
 	j.OutputPath = outputPath

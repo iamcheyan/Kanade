@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
 )
 
 // settingDefaults are the account-level preferences the application understands.

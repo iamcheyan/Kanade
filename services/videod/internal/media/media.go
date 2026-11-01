@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
 )
 
 type Config struct {
@@ -51,6 +50,9 @@ type job struct {
 	OutputPath   string  `json:"output_path,omitempty"`
 	cmd          *exec.Cmd
 	cancel       context.CancelFunc
+	// anonymous is set when a cookie-authenticated attempt produced no usable
+	// audio stream, so the retry is fetched with the public player response.
+	anonymous bool
 }
 
 type player struct {
