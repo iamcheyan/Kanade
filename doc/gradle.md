@@ -29,3 +29,21 @@ adb shell monkey -p com.jm21.player.debug 1
 ```
 
 Check connected devices first with `adb devices -l`. When more than one device is connected, select one explicitly with `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`; the debug application ID is `com.jm21.player.debug`.
+
+## Building the on-device service (videod)
+
+The app keeps cookies, yt-dlp and the download queue in a separate process,
+`services/videod`. It is a plain Go module in this repository:
+
+```sh
+cd services/videod
+make          # cross-compiles videod-arm64 for the phone
+make run      # runs it on the host against a scratch data dir
+```
+
+The binary is pure Go (`CGO_ENABLED=0`, `modernc.org/sqlite`), so no NDK is
+needed. Deployment and the Termux start script are described in
+`services/videod/README.md`.
+
+The service must be running before the app can list or download anything; the
+app talks to it over `http://127.0.0.1:8732`.
