@@ -90,6 +90,9 @@ class OfflineLibraryFragment : BaseFragment() {
     private var loadGeneration = 0
     private val unseenPolls = HashMap<String, Int>()
 
+    /** Job ids already retried by a refresh, so one bad URL is not requeued forever. */
+    private val retriedJobs = HashSet<Long>()
+
     private val connectivityManager get() = requireContext()
         .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
@@ -497,10 +500,27 @@ class OfflineLibraryFragment : BaseFragment() {
     /** Queue rows that are on the list but not downloaded yet, without reordering them. */
     private fun queuePendingEntries(accounts: List<String>, generation: Int) {
         if (!isCurrent(generation) || _binding == null) return
+        // Failed rows are retried too: without that, one transient yt-dlp error
+        // parks a video forever, because it never returns to PENDING by itself.
+        // PAUSED is left alone; that state is the user's decision.
         val pendingByAccount = accounts.distinct().associateWith { account ->
-            entries.filter { it.accountId == account && it.state == LibraryEntry.State.PENDING }
+            entries.filter {
+                it.accountId == account && when (it.state) {
+                    LibraryEntry.State.PENDING -> true
+
+                    // Retry a failure once; a job that failed again is left for
+                    // the user to tap, so one dead URL cannot loop forever.
+                    LibraryEntry.State.FAILED -> it.jobId !in retriedJobs
+
+                    else -> false
+                }
+            }
         }
         val queuedIds = pendingByAccount.values.flatten().map { it.videoId }.toSet()
+        android.util.Log.d(
+            "KanadeQueue",
+            "accounts=$accounts entries=${entries.size} pending=${pendingByAccount.mapValues { it.value.size }}"
+        )
         if (queuedIds.isEmpty()) {
             finishRefresh()
             schedulePolling()
@@ -513,6 +533,9 @@ class OfflineLibraryFragment : BaseFragment() {
         for (entryIndex in entries.indices) {
             val entry = entries[entryIndex]
             if (entry.videoId in queuedIds && entry.accountId in accounts) {
+                if (entry.state == LibraryEntry.State.FAILED && entry.jobId > 0L) {
+                    retriedJobs.add(entry.jobId)
+                }
                 entries[entryIndex] = entry.copy(state = LibraryEntry.State.QUEUED, error = "")
             }
         }
