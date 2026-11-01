@@ -86,11 +86,17 @@ func (s *Service) library(w http.ResponseWriter, r *http.Request) {
 // Path containment is enforced here rather than at the call site: the path
 // comes from the database, and a stale or hand-edited row must not be able to
 // delete anything outside the download root.
+// DeleteDownload removes a video's file and every queued/finished job row for
+// it. The bool reports whether a file was actually unlinked; callers that only
+// care about "the video is now clean" should treat a nil error as success.
 func (s *Service) DeleteDownload(ctx context.Context, account, videoID string) (bool, error) {
 	var path string
 	err := s.db.QueryRowContext(ctx, `SELECT output_path FROM downloads WHERE account_id=? AND video_id=? AND state='completed' ORDER BY created_at DESC LIMIT 1`, account, videoID).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		// Nothing landed on disk, but failed or cancelled rows may still exist.
+		// Clearing them is what lets the video be queued again.
+		_, derr := s.db.ExecContext(ctx, `DELETE FROM downloads WHERE account_id=? AND video_id=?`, account, videoID)
+		return false, derr
 	}
 	if err != nil {
 		return false, err
@@ -140,12 +146,10 @@ func (s *Service) deleteLibraryVideo(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 500, "storage_error", "unable to remove media")
 		return
 	}
-	if !removed {
-		// Either no completed row exists or the row had no usable file; both
-		// mean there is nothing to delete from this endpoint's point of view.
-		apiError(w, 404, "media_not_found", "offline media not found")
-		return
-	}
+	// The row cleanup succeeded even when no file was on disk (a failed or
+	// cancelled job leaves rows behind), and the client's job is to end up with
+	// the video unblocked, so this is not a 404.
+	_ = removed
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Service) mediaStream(w http.ResponseWriter, r *http.Request) {

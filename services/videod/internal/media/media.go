@@ -268,9 +268,31 @@ func (s *Service) downloads(w http.ResponseWriter, r *http.Request) {
 }
 
 // enqueue persists one queued download row and registers it in memory.
+
+// activeJobFor returns an in-flight job for the same account and video.
+func (s *Service) activeJobFor(account, videoID string) *job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.jobs {
+		if j.AccountID != account || j.VideoID != videoID {
+			continue
+		}
+		if j.State == "queued" || j.State == "downloading" || j.State == "paused" {
+			return j
+		}
+	}
+	return nil
+}
+
 func (s *Service) enqueue(account, videoID, videoURL, mode, quality, bitrate string, priority int) (*job, int, string, string) {
 	if videoURL == "" {
 		return nil, 400, "video_required", "video_id is required"
+	}
+	// Two active jobs for one video write the same output file, and the second
+	// one then fails while renaming the first one's temporary file. Refuse the
+	// duplicate instead; a finished or failed job may be retried freely.
+	if dup := s.activeJobFor(account, videoID); dup != nil {
+		return dup, http.StatusAccepted, "already_active", ""
 	}
 	s.writeMu.Lock()
 	res, err := s.db.ExecContext(context.Background(), `INSERT INTO downloads(account_id,video_id,url,mode,quality,audio_bitrate,priority) VALUES(?,?,?,?,?,?,?)`, account, videoID, videoURL, mode, quality, bitrate, priority)
@@ -332,12 +354,16 @@ func (s *Service) enqueueBatch(w http.ResponseWriter, r *http.Request, account s
 			results = append(results, result{VideoID: vid, Error: "video_not_found"})
 			continue
 		}
-		j, status, _, message := s.enqueue(account, vid, videoURL, mode, quality, bitrate, priority-i)
+		j, status, code, message := s.enqueue(account, vid, videoURL, mode, quality, bitrate, priority-i)
 		if status != http.StatusAccepted {
 			results = append(results, result{VideoID: vid, Error: message})
 			continue
 		}
-		queued++
+		// A video that already has an in-flight job is reported but not counted,
+		// so the caller's queued total matches what actually started.
+		if code != "already_active" {
+			queued++
+		}
 		results = append(results, result{VideoID: vid, ID: j.ID, State: j.State})
 	}
 	s.kick()
