@@ -18,6 +18,7 @@ data class LibraryEntry(
     val progress: Int = 0,
     val jobId: Long = 0,
     val remoteMissingSince: String = "",
+    val favorite: Boolean = false,
     val resumePosition: Long = 0,
     val error: String = ""
 ) {
@@ -43,6 +44,9 @@ data class LibraryEntry(
     /** A row counts as watched when the source list no longer contains it. */
     val isWatched: Boolean get() = remoteMissingSince.isNotEmpty()
 
+    /** Favorited rows keep their place in the favorites tab. */
+    val isFavorite: Boolean get() = favorite
+
     /** Rows with queued/transferring jobs are the only ones worth polling. */
     val isActive: Boolean get() = state == State.QUEUED || state == State.ACTIVE
 }
@@ -59,7 +63,8 @@ fun buildLibraryEntries(
     downloaded: List<OfflineVideo>,
     watchLater: List<WatchLaterItem>,
     jobs: List<DownloadJob>,
-    resumeById: Map<String, Long> = emptyMap()
+    resumeById: Map<String, Long> = emptyMap(),
+    favorites: Set<String> = emptySet()
 ): List<LibraryEntry> {
     // Only the newest job per video matters: retries insert a new row and leave
     // the failed one behind.
@@ -86,6 +91,7 @@ fun buildLibraryEntries(
                 duration = video.duration,
                 state = LibraryEntry.State.DOWNLOADED,
                 remoteMissingSince = video.remoteMissingSince,
+                favorite = key in favorites,
                 resumePosition = resumeById[video.id] ?: 0L
             )
         )
@@ -117,6 +123,7 @@ fun buildLibraryEntries(
                 state = state,
                 progress = job?.progress ?: 0,
                 jobId = job?.id ?: 0L,
+                favorite = key in favorites,
                 resumePosition = resumeById[item.id] ?: 0L,
                 error = job?.error.orEmpty()
             )

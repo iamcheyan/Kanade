@@ -6,6 +6,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Single
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -35,14 +37,45 @@ class StorageAnalysisFragment : BaseFragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        setTitle(getString(R.string.storage_analysis_title))
         _binding = FragmentStorageAnalysisBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        applyInsets()
         load()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (activity as? androidx.appcompat.app.AppCompatActivity)?.let { host ->
+            host.findViewById<View>(R.id.toolbar_layout)?.visibility = View.VISIBLE
+            host.supportActionBar?.title = getString(R.string.storage_analysis_title)
+            host.supportActionBar?.setDisplayHomeAsUpEnabled(false)
+            val toolbar = host.findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
+            toolbar.title = getString(R.string.storage_analysis_title)
+            toolbar.setNavigationIcon(R.drawable.ic_arrow_back)
+            toolbar.setNavigationOnClickListener { host.onBackPressedDispatcher.onBackPressed() }
+        }
+    }
+
+    /**
+     * The screen sits under the activity toolbar, so it has to clear the status
+     * bar and the toolbar height itself; otherwise rows scroll behind the cutout.
+     */
+    private fun applyInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { scroll, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val density = resources.displayMetrics.density
+            scroll.setPadding(
+                scroll.paddingLeft,
+                bars.top + (56 * density).toInt(),
+                scroll.paddingRight,
+                bars.bottom + (16 * density).toInt()
+            )
+            insets
+        }
     }
 
     override fun onDestroyView() {
@@ -92,7 +125,7 @@ class StorageAnalysisFragment : BaseFragment() {
                     formatBytes(data.watchedBytes)
                 )
                 textSize = 16f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
             }
         )
         data.videos.filter { it.watched }.forEach { video ->
@@ -159,7 +192,7 @@ class StorageAnalysisFragment : BaseFragment() {
             TextView(context).apply {
                 text = Sources.label(usage.account)
                 textSize = 17f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
             }
         )
         section.addView(
@@ -170,7 +203,7 @@ class StorageAnalysisFragment : BaseFragment() {
                     formatBytes(usage.bytes)
                 )
                 textSize = 12f
-                setTextColor(0xFF999999.toInt())
+                setTextColor(0xFF9DA3B4.toInt())
                 setPadding(0, 4, 0, 8)
             }
         )
@@ -221,7 +254,8 @@ class StorageAnalysisFragment : BaseFragment() {
                 video.title,
                 video.bytes,
                 total,
-                palette[index % palette.size]
+                palette[index % palette.size],
+                video
             )
         }
         if (restBytes > 0) {
@@ -256,7 +290,7 @@ class StorageAnalysisFragment : BaseFragment() {
             TextView(context).apply {
                 text = getString(R.string.storage_analysis_orphans)
                 textSize = 14f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
         )
@@ -264,7 +298,7 @@ class StorageAnalysisFragment : BaseFragment() {
             TextView(context).apply {
                 text = formatBytes(data.orphanBytes)
                 textSize = 13f
-                setTextColor(0xFFAAAAAA.toInt())
+                setTextColor(0xFF9DA3B4.toInt())
             }
         )
         binding.analysisSections.addView(row)
@@ -289,8 +323,11 @@ class StorageAnalysisFragment : BaseFragment() {
             setPadding(0, 10, 0, 10)
             gravity = android.view.Gravity.CENTER_VERTICAL
             if (video != null) {
+                // The whole row is the tap target: a 13sp title alone is a small
+                // target on a phone, and the size next to it means the same row.
                 isClickable = true
-                setBackgroundResource(android.R.drawable.list_selector_background)
+                isFocusable = true
+                setBackgroundResource(R.drawable.bg_analysis_row)
                 setOnClickListener { openVideo(video) }
             }
         }
@@ -304,7 +341,7 @@ class StorageAnalysisFragment : BaseFragment() {
             TextView(context).apply {
                 text = label
                 textSize = 13f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(context.getColor(R.color.kanade_text_primary))
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -315,7 +352,7 @@ class StorageAnalysisFragment : BaseFragment() {
             TextView(context).apply {
                 text = "$percent%  ${formatBytes(bytes)}"
                 textSize = 12f
-                setTextColor(0xFFAAAAAA.toInt())
+                setTextColor(context.getColor(R.color.kanade_text_secondary))
                 setPadding(12, 0, 0, 0)
             }
         )

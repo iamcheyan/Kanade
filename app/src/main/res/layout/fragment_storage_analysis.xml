@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Same surface treatment as the settings screen: dark page, inset content. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/analysis_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorBackgroundFloating">
+    android:background="@color/kanade_background">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -11,13 +13,14 @@
         android:paddingStart="24dp"
         android:paddingTop="8dp"
         android:paddingEnd="24dp"
-        android:paddingBottom="40dp">
+        android:paddingBottom="32dp">
 
         <TextView
             android:id="@+id/analysis_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="16dp"
+            android:textColor="@color/kanade_text_secondary"
             android:textSize="14sp" />
 
         <LinearLayout

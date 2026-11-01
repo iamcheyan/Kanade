@@ -1018,4 +1018,8 @@
     <string name="sort_title">Title</string>
     <string name="sort_resume">Resume position</string>
     <string name="offline_play_from_start">Play from start</string>
+    <string name="offline_favorites_tab">Favorites</string>
+    <string name="offline_favorites_empty">No favorites yet</string>
+    <string name="offline_favorite_add">Add to favorites</string>
+    <string name="offline_favorite_remove">Remove from favorites</string>
 </resources>

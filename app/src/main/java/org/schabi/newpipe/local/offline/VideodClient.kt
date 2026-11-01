@@ -297,6 +297,33 @@ class VideodClient(private val baseUrl: String = DEFAULT_BASE_URL) {
         return items
     }
 
+    /** Video IDs favorited for one source. */
+    fun favorites(account: String): Set<String> {
+        return objects(get("/api/favorites?account_id=$account&limit=$PAGE_SIZE"))
+            .map { stringField(it, "id") }
+            .filter { it.isNotEmpty() }
+            .toSet()
+    }
+
+    fun addFavorite(account: String, videoId: String) {
+        post("/api/favorites/$videoId?account_id=$account", "{}")
+    }
+
+    fun removeFavorite(account: String, videoId: String) {
+        val connection = URL("$baseUrl/api/favorites/$videoId?account_id=$account")
+            .openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "DELETE"
+        connection.connectTimeout = 10_000
+        connection.readTimeout = TIMEOUT_MS
+        try {
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("HTTP ${connection.responseCode}")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /**
      * Sources whose switch is not off. A missing key stays enabled, matching
      * the settings screen. Pass an already loaded map to avoid a second request.

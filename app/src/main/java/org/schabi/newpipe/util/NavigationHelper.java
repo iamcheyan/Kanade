@@ -641,6 +641,18 @@ public final class NavigationHelper {
      * @param fragmentManager the manager that receives the transaction
      */
     public static void openOfflineSettings(final FragmentManager fragmentManager) {
+        // The home screen is not on the back stack (gotoMainFragment commits it
+        // without an entry), so pushing settings alone leaves a single entry and
+        // MainActivity.finish()es on back. Re-adding home first makes back land
+        // on the library instead of closing the app.
+        if (fragmentManager.getBackStackEntryCount() == 0) {
+            defaultTransaction(fragmentManager)
+                    .replace(R.id.fragment_holder,
+                            org.schabi.newpipe.local.offline.OfflineLibraryFragment
+                                    .Companion.newInstance(null))
+                    .addToBackStack(null)
+                    .commit();
+        }
         defaultTransaction(fragmentManager)
                 .replace(R.id.fragment_holder,
                         new org.schabi.newpipe.local.offline.SettingsFragment())

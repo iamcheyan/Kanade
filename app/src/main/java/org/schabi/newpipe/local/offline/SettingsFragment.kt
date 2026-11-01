@@ -138,10 +138,16 @@ class SettingsFragment : BaseFragment() {
             max = 4
             progress = 0
             visibility = View.GONE
+            progressTintList = android.content.res.ColorStateList.valueOf(
+                requireContext().getColor(R.color.kanade_accent)
+            )
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(
+                requireContext().getColor(R.color.kanade_divider)
+            )
         }.also(column::addView)
         syncDetails = TextView(requireContext()).apply {
             textSize = 13f
-            setTextColor(0xFFBBBBBB.toInt())
+            setTextColor(0xFF9DA3B4.toInt())
             visibility = View.GONE
             setTextIsSelectable(true)
         }.also(column::addView)
@@ -202,7 +208,7 @@ class SettingsFragment : BaseFragment() {
             val header = TextView(requireContext()).apply {
                 text = title
                 textSize = 13f
-                setTextColor(0xFF888888.toInt())
+                setTextColor(0xFF6B7080.toInt())
                 setPadding(0, 40, 0, 12)
             }
             parent.addView(header)
@@ -229,17 +235,30 @@ class SettingsFragment : BaseFragment() {
             TextView(requireContext()).apply {
                 text = title
                 textSize = 15f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
             }
         )
         textColumn.addView(
             TextView(requireContext()).apply {
                 text = summary
                 textSize = 12f
-                setTextColor(0xFF999999.toInt())
+                setTextColor(0xFF9DA3B4.toInt())
             }
         )
-        val toggle = SwitchCompat(requireContext())
+        val toggle = SwitchCompat(requireContext()).apply {
+            // The default track is nearly invisible on this background, and the
+            // unchecked thumb blends into it. Both states get explicit colours.
+            val accent = context.getColor(R.color.kanade_accent)
+            val track = context.getColor(R.color.kanade_divider)
+            thumbTintList = android.content.res.ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(accent, context.getColor(R.color.kanade_text_tertiary))
+            )
+            trackTintList = android.content.res.ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(withAlpha(accent, 0.38f), track)
+            )
+        }
         row.addView(textColumn)
         row.addView(toggle)
         parent.addView(row)
@@ -248,7 +267,12 @@ class SettingsFragment : BaseFragment() {
         return toggle
     }
 
-    /** A row that cycles through the available choices when tapped. */
+    /** Blend a colour towards transparent for a track behind an opaque thumb. */
+    private fun withAlpha(color: Int, alpha: Float): Int {
+        val a = (alpha.coerceIn(0f, 1f) * 255).toInt()
+        return (color and 0x00FFFFFF) or (a shl 24)
+    }
+
     private fun addChoice(
         parent: LinearLayout,
         title: String,
@@ -271,14 +295,14 @@ class SettingsFragment : BaseFragment() {
             TextView(requireContext()).apply {
                 text = title
                 textSize = 15f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
             }
         )
         row.addView(
             TextView(requireContext()).apply {
                 text = summary
                 textSize = 12f
-                setTextColor(0xFF999999.toInt())
+                setTextColor(0xFF9DA3B4.toInt())
             }
         )
         val value = TextView(requireContext()).apply {
@@ -352,13 +376,13 @@ class SettingsFragment : BaseFragment() {
             TextView(requireContext()).apply {
                 text = label
                 textSize = 15f
-                setTextColor(0xFFFFFFFF.toInt())
+                setTextColor(0xFFF1F3F7.toInt())
             }
         )
         val valueView = TextView(requireContext()).apply {
             text = value
             textSize = 13f
-            setTextColor(0xFFAAAAAA.toInt())
+            setTextColor(0xFF9DA3B4.toInt())
             setPadding(0, 4, 0, 0)
         }
         column.addView(valueView)

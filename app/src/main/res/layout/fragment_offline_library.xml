@@ -172,6 +172,20 @@
                         android:textSize="13sp" />
 
                     <TextView
+                        android:id="@+id/tab_favorites"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_tab_pill_unselected"
+                        android:paddingStart="16dp"
+                        android:paddingTop="6dp"
+                        android:paddingEnd="16dp"
+                        android:paddingBottom="6dp"
+                        android:text="@string/offline_favorites_tab"
+                        android:textColor="#9DA3B4"
+                        android:textSize="13sp" />
+
+                    <TextView
                         android:id="@+id/tab_watched"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"

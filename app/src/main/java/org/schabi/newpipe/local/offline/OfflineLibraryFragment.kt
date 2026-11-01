@@ -95,6 +95,7 @@ class OfflineLibraryFragment : BaseFragment() {
 
     private var currentAccountFilter: String? = null
     private var showWatchedOnly = false
+    private var showFavoritesOnly = false
     private var watchedSyncRunning = false
     private var currentSearchQuery: String = ""
     private var currentSortMode: Int = SORT_DEFAULT
@@ -315,21 +316,32 @@ class OfflineLibraryFragment : BaseFragment() {
         binding.tabAll.setOnClickListener { selectTab(null) }
         binding.tabBilibili.setOnClickListener { selectTab(Sources.BILIBILI) }
         binding.tabYoutube.setOnClickListener { selectTab(Sources.YOUTUBE) }
+        binding.tabFavorites.setOnClickListener { selectFavoritesTab() }
         binding.tabWatched.setOnClickListener { selectWatchedTab() }
         binding.clearWatchedButton.setOnClickListener { confirmClearWatched() }
         updateTabsUI()
     }
 
     private fun selectTab(account: String?) {
-        if (currentAccountFilter == account && !showWatchedOnly) return
+        if (currentAccountFilter == account && !showWatchedOnly && !showFavoritesOnly) return
         currentAccountFilter = account
         showWatchedOnly = false
+        showFavoritesOnly = false
+        updateTabsUI()
+        applyFilterAndSort()
+    }
+
+    private fun selectFavoritesTab() {
+        currentAccountFilter = null
+        showWatchedOnly = false
+        showFavoritesOnly = true
         updateTabsUI()
         applyFilterAndSort()
     }
 
     private fun selectWatchedTab() {
         currentAccountFilter = null
+        showFavoritesOnly = false
         showWatchedOnly = true
         updateTabsUI()
         applyFilterAndSort()
@@ -345,9 +357,10 @@ class OfflineLibraryFragment : BaseFragment() {
             tv.typeface = if (isSelected) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
         }
 
-        setPill(binding.tabAll, selectedTab == null && !showWatchedOnly)
-        setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI && !showWatchedOnly)
-        setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE && !showWatchedOnly)
+        setPill(binding.tabAll, selectedTab == null && !showWatchedOnly && !showFavoritesOnly)
+        setPill(binding.tabBilibili, selectedTab == Sources.BILIBILI && !showWatchedOnly && !showFavoritesOnly)
+        setPill(binding.tabYoutube, selectedTab == Sources.YOUTUBE && !showWatchedOnly && !showFavoritesOnly)
+        setPill(binding.tabFavorites, showFavoritesOnly)
         setPill(binding.tabWatched, showWatchedOnly)
         updateClearWatchedButton()
     }
@@ -654,11 +667,17 @@ class OfflineLibraryFragment : BaseFragment() {
 
         val watchLater = ArrayList<WatchLaterItem>()
         val jobs = ArrayList<DownloadJob>()
+        val favorites = HashSet<String>()
         for (account in accounts) {
             try {
                 watchLater.addAll(client.watchLater(account))
             } catch (e: Exception) {
                 // No source list for this account; downloaded rows still show.
+            }
+            try {
+                for (id in client.favorites(account)) favorites.add(account + "/" + id)
+            } catch (e: Exception) {
+                // Favorites are optional; the library still loads without them.
             }
             try {
                 jobs.addAll(client.downloads(account))
@@ -684,7 +703,7 @@ class OfflineLibraryFragment : BaseFragment() {
             progressById.putAll(resumeById)
         }
 
-        return buildLibraryEntries(visibleDownloads, watchLater, jobs, resumeById)
+        return buildLibraryEntries(visibleDownloads, watchLater, jobs, resumeById, favorites)
     }
 
     /** Replace the rows for the accounts in [fresh], keeping every other row. */
@@ -748,9 +767,10 @@ class OfflineLibraryFragment : BaseFragment() {
             val matchAccount = currentAccountFilter == null ||
                 entry.accountId == currentAccountFilter
             val matchWatched = !showWatchedOnly || entry.isWatched
+            val matchFavorite = !showFavoritesOnly || entry.isFavorite
             val matchQuery = currentSearchQuery.isEmpty() ||
                 entry.title.contains(currentSearchQuery, ignoreCase = true)
-            matchAccount && matchWatched && matchQuery
+            matchAccount && matchWatched && matchFavorite && matchQuery
         }
 
         filtered = when (currentSortMode) {
@@ -796,7 +816,9 @@ class OfflineLibraryFragment : BaseFragment() {
                 getString(R.string.offline_library_empty_detail)
             )
         } else if (displayedEntries.isEmpty()) {
-            if (showWatchedOnly) {
+            if (showFavoritesOnly) {
+                showStatus(getString(R.string.offline_favorites_empty), "")
+            } else if (showWatchedOnly) {
                 showStatus(getString(R.string.offline_watched_empty), "")
             } else {
                 showStatus(getString(R.string.sources_empty), "")
@@ -1117,6 +1139,46 @@ class OfflineLibraryFragment : BaseFragment() {
         )
     }
 
+    /**
+     * Favorites live in videod so they survive a reinstall, and the row is
+     * updated in place: a full reload would scroll the list back to the top.
+     */
+    private fun toggleFavorite(entry: LibraryEntry) {
+        val next = !entry.isFavorite
+        val index = entries.indexOfFirst {
+            it.videoId == entry.videoId && it.accountId == entry.accountId
+        }
+        if (index >= 0) {
+            entries[index] = entries[index].copy(favorite = next)
+            syncDisplayedFromEntries()
+            if (showFavoritesOnly) applyFilterAndSort()
+        }
+        disposables.add(
+            io.reactivex.rxjava3.core.Single.fromCallable {
+                if (next) {
+                    client.addFavorite(entry.accountId, entry.videoId)
+                } else {
+                    client.removeFavorite(entry.accountId, entry.videoId)
+                }
+            }
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    {},
+                    { error ->
+                        // Put the row back so the UI does not claim a state the
+                        // service rejected.
+                        if (index >= 0 && index < entries.size) {
+                            entries[index] = entries[index].copy(favorite = !next)
+                            syncDisplayedFromEntries()
+                            applyFilterAndSort()
+                        }
+                        toast(error.message ?: error.javaClass.simpleName)
+                    }
+                )
+        )
+    }
+
     private fun sourceLabel(account: String): String = when (account) {
         Sources.BILIBILI -> getString(R.string.offline_source_bilibili)
         Sources.YOUTUBE -> getString(R.string.offline_source_youtube)
@@ -1247,7 +1309,6 @@ class OfflineLibraryFragment : BaseFragment() {
                     if (!entry.isWatched) {
                         popup.menu.add(0, 3, 2, getString(R.string.offline_mark_watched))
                     }
-                    popup.menu.add(0, 4, 3, getString(R.string.offline_remove_from_library))
                 } else {
                     popup.menu.add(
                         0,
@@ -1263,14 +1324,27 @@ class OfflineLibraryFragment : BaseFragment() {
                     )
                 }
 
+                popup.menu.add(
+                    0,
+                    7,
+                    if (entry.state == LibraryEntry.State.DOWNLOADED) 3 else 1,
+                    getString(
+                        if (entry.isFavorite) {
+                            R.string.offline_favorite_remove
+                        } else {
+                            R.string.offline_favorite_add
+                        }
+                    )
+                )
+
                 popup.setOnMenuItemClickListener { menuItem ->
                     when (menuItem.itemId) {
                         1 -> play(entry, false)
                         2 -> play(entry, true)
                         3 -> markWatched(entry)
-                        4 -> deleteDownload(entry)
                         5 -> startDownload(entry)
                         6 -> resumeDownload(entry)
+                        7 -> toggleFavorite(entry)
                     }
                     true
                 }

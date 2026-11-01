@@ -110,4 +110,8 @@
     <string name="offline_refresh_up_to_date">已是最新</string>
     <string name="offline_refresh_found">%1$d 个新视频 · 正在下载</string>
     <string name="offline_refresh_found_one">1 个新视频 · 正在下载</string>
+    <string name="offline_favorites_tab">收藏</string>
+    <string name="offline_favorites_empty">还没有收藏</string>
+    <string name="offline_favorite_add">加入收藏</string>
+    <string name="offline_favorite_remove">取消收藏</string>
 </resources>

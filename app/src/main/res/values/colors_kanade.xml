@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Palette for the offline (Kanade) screens.
+
+  These screens draw their own rows instead of using prefab preference widgets,
+  so they need one place to read colours from. Values match the app's dark
+  theme so the settings and storage screens agree with the rest of the UI.
+-->
+<resources>
+    <color name="kanade_background">#0D0F14</color>
+    <color name="kanade_surface">#181A22</color>
+    <color name="kanade_divider">#22262F</color>
+
+    <color name="kanade_text_primary">#F1F3F7</color>
+    <color name="kanade_text_secondary">#9DA3B4</color>
+    <color name="kanade_text_tertiary">#6B7080</color>
+
+    <color name="kanade_accent">#38BDF8</color>
+    <color name="kanade_danger">#FF7777</color>
+</resources>
