@@ -136,7 +136,13 @@ func (s *Service) StartPull(ctx context.Context) (bool, string) {
 		return false, "nas disabled"
 	}
 	if !cfg.Valid() {
-		return false, "nas host or share missing"
+		return false, "share host or share missing"
+	}
+	// "Pull once Wi-Fi is up" without a way to ask: a carrier is false exactly
+	// when nothing is connected, and it answers instantly instead of paying a
+	// dial timeout on every sync in a tunnel or with the radio off.
+	if !share.Online() {
+		return false, "no network"
 	}
 	if s.puller == nil {
 		s.puller = &puller{}
