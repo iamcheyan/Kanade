@@ -43,7 +43,15 @@ func (s *Service) playerAction(w http.ResponseWriter, r *http.Request) {
 				apiError(w, 400, "invalid_request", "video_id or url required")
 				return
 			}
-			if err := s.db.QueryRowContext(r.Context(), `SELECT url FROM videos WHERE id=? AND account_id=?`, in.VideoID, account).Scan(&in.URL); err != nil {
+			// An offline library plays what is on the card: the remote URL is
+			// only a fallback for a video that was never downloaded.
+			var local string
+			_ = s.db.QueryRowContext(r.Context(),
+				`SELECT output_path FROM downloads WHERE video_id=? AND account_id=? AND state='completed' AND output_path<>'' ORDER BY (mode='video') DESC, id LIMIT 1`,
+				in.VideoID, account).Scan(&local)
+			if local != "" {
+				in.URL = local
+			} else if err := s.db.QueryRowContext(r.Context(), `SELECT url FROM videos WHERE id=? AND account_id=?`, in.VideoID, account).Scan(&in.URL); err != nil {
 				apiError(w, 404, "video_not_found", "video not found")
 				return
 			}
@@ -125,13 +133,32 @@ func (s *Service) launch(url string, resumeSec float64) (*player, error) {
 		return nil, err
 	}
 	sock := filepath.Join(s.cfg.IPCDir, fmt.Sprintf("pocket-mpv-%d.sock", time.Now().UnixNano()))
-	args := []string{"--no-config", "--no-terminal", "--vo=null", "--ao=null", "--idle=no", "--input-ipc-server=" + sock}
+	args := []string{"--no-config", "--no-terminal", "--idle=no", "--input-ipc-server=" + sock}
+	// A fixed --vo=null/--ao=null pair plays nothing: it only tracks position,
+	// which is why "play" on the panel produced silence and a black screen. The
+	// output backends belong to the host (KMS on the handheld, X11 on the
+	// desktop harness), so they come from the environment and are omitted when
+	// unset, letting mpv choose.
+	if vo := strings.TrimSpace(os.Getenv("KANADE_MPV_VO")); vo != "" {
+		args = append(args, "--vo="+vo)
+	}
+	if ao := strings.TrimSpace(os.Getenv("KANADE_MPV_AO")); ao != "" {
+		args = append(args, "--ao="+ao)
+	}
 	if resumeSec > 0 {
 		args = append(args, fmt.Sprintf("--start=%.3f", resumeSec))
 	}
 	args = append(args, url)
 	cmd := exec.Command(exe, args...)
-	cmd.Env = append(os.Environ(), "DISPLAY=", "WAYLAND_DISPLAY=")
+	// mpv must not inherit the panel's session environment: on the handheld it
+	// drives KMS itself and a stale WAYLAND_DISPLAY makes it open a socket that
+	// is not there. The desktop harness is the exception — there the video is an
+	// X11 window.
+	env := os.Environ()
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("KANADE_MPV_VO")), "x11") {
+		env = append(env, "DISPLAY=", "WAYLAND_DISPLAY=")
+	}
+	cmd.Env = env
 	if err = cmd.Start(); err != nil {
 		return nil, err
 	}

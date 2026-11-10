@@ -56,3 +56,10 @@ each `*-2x.png` is the same pixels at device density for reading text.
 Audio, the panel's own GPU path and the pad driver are device-only. The
 transfer of the package to the card and its admission are exercised by
 `pocket/scripts/deploy.sh` on the device.
+
+## Captures are not committed
+
+The run now serves the real library, so a frame contains video titles and cover
+art from a personal watch history. The frames stay local (the script writes
+them into this directory) and are deliberately not committed; the notes here
+describe what to expect from them instead.

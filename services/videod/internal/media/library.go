@@ -53,6 +53,15 @@ func (s *Service) library(w http.ResponseWriter, r *http.Request) {
 	if filter != "" {
 		base += ` AND d.mode=?`
 		args = append(args, filter)
+	} else {
+		// One video can be downloaded twice — a video row plus its extracted
+		// audio — and both are 'completed', so the list showed every entry
+		// twice. Keep a single row per video, preferring the video download;
+		// an audio-only library still lists its audio rows.
+		base += ` AND d.id=(SELECT d2.id FROM downloads d2
+			WHERE d2.account_id=d.account_id AND d2.video_id=d.video_id
+			  AND d2.state='completed' AND d2.output_path<>''
+			ORDER BY (d2.mode='video') DESC, d2.id LIMIT 1)`
 	}
 	rows, err := s.db.QueryContext(r.Context(), base+" ORDER BY "+order, args...)
 	if err != nil {

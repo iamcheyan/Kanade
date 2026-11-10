@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -81,7 +82,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "kanade-ctl: read:", err)
 		os.Exit(3)
 	}
-	os.Stdout.Write(out)
+	// Binary bodies (the cover pixels) cannot travel the bridge as text: the
+	// guest receives one String. Base64 the octet-stream case so the caller
+	// gets something it can decode back to bytes.
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/octet-stream") {
+		fmt.Print(base64.StdEncoding.EncodeToString(out))
+	} else {
+		os.Stdout.Write(out)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		os.Exit(4)
 	}

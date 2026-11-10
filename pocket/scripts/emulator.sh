@@ -13,8 +13,8 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SDK=${POCKETJS_SDK:-$HOME/development/.pocketjs-star-drift-sdk}
 BUN=${BUN:-$HOME/.bun/bin/bun}
 OUTDIR=${OUTDIR:-$REPO/pocket/docs/emulator}
-DATA=${KANADE_DATA:-/tmp/kanade-emu-data}
-PORT=${KANADE_PORT:-8790}
+DATA=${KANADE_DATA:-/tmp/kanade-real}
+PORT=${KANADE_PORT:-8791}
 DISPLAY_NUM=${KANADE_DISPLAY:-:99}
 SHOTS=1
 [ "${1:-}" = "--shots" ] && SHOTS=1
@@ -34,12 +34,23 @@ GO=${GO:-$(command -v go)}
   CGO_ENABLED=0 "$GO" build -o /tmp/kanade-ctl ./cmd/kanade-ctl && \
   CGO_ENABLED=0 "$GO" build -o /tmp/videod-host ./cmd/videod)
 
-echo "== 2/6 videod with seeded data"
-pkill -x videod-host 2>/dev/null || true
-pkill -x videod-amd64 2>/dev/null || true
+echo "== 2/6 videod on the real library"
+# The point of the run is the real list: a copy of the production database and
+# the real download directory, served by a second instance so the running
+# service is neither touched nor restarted. Rows come from the same query the
+# device runs, and the covers are the sidecar JPEGs on the card.
+# Both are required: a real library lives on the machine that owns it, and
+# hard-coding where would put someone's media paths in the repository.
+LIVE_DB=${KANADE_LIVE_DB:?set KANADE_LIVE_DB to a videod database}
+LIVE_MEDIA=${KANADE_LIVE_MEDIA:?set KANADE_LIVE_MEDIA to the downloaded media directory}
+[ -r "$LIVE_DB" ] || { echo "emulator: no live database at $LIVE_DB" >&2; exit 1; }
+[ -d "$LIVE_MEDIA" ] || { echo "emulator: no media directory at $LIVE_MEDIA" >&2; exit 1; }
+for pid in $(ps -eo pid,args | awk '/[v]ideod-host/ {print $1}'); do kill "$pid" 2>/dev/null || true; done
 rm -rf "$DATA" && mkdir -p "$DATA"
-KANADE_DOWNLOADS="$DATA/downloads" nohup /tmp/videod-host -addr "127.0.0.1:$PORT" -data "$DATA" -seed -seed-library >/tmp/videod-emu.log 2>&1 &
-sleep 2
+cp "$LIVE_DB" "$DATA/kanade.db"
+KANADE_DOWNLOADS="$LIVE_MEDIA" KANADE_MPV=${KANADE_MPV:-/usr/bin/mpv} \
+  nohup /tmp/videod-host -addr "127.0.0.1:$PORT" -data "$DATA" >/tmp/videod-emu.log 2>&1 &
+sleep 3
 KANADE_BASE="http://127.0.0.1:$PORT" /tmp/kanade-ctl GET /api/health >/dev/null \
   || { echo "videod did not answer"; tail -5 /tmp/videod-emu.log; exit 1; }
 

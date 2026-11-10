@@ -1,11 +1,30 @@
 import { createSignal, onMount } from "solid-js";
 import { mount } from "@pocketjs/framework/solid";
-import { Text, View } from "@pocketjs/framework/solid/components";
+import { getOps } from "@pocketjs/framework";
+import { Image, Text, View } from "@pocketjs/framework/solid/components";
 import { BTN, onTextEvent } from "@pocketjs/framework/input";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 
+import { coverHandle } from "./covers";
 import { call } from "./host";
 import { TABS, clip, clock, parseVideos, serviceUp, storageSummary, type VideoRow } from "./kanade-model";
+
+// A cover is a texture bound after its node exists: the guest cannot fetch and
+// cannot decode, so the handle comes from the service through the bridge and is
+// attached with setImage, which is also how the framework's resource images work
+// when the pixels arrive late.
+const Cover = (props: { id: string }) => {
+  // Bind in the ref rather than in an effect: the texture is computed once per
+  // id and a deferred effect would leave the node without a handle for a frame,
+  // which renders as an empty cell.
+  const bind = (node: { id: number }) => {
+    const handle = coverHandle(props.id);
+    if (handle >= 0) getOps().setImage(node.id, handle);
+  };
+  // An image node needs explicit layout: `class` alone leaves it unmeasured and
+  // the renderer drops it.
+  return <Image ref={(n: unknown) => bind(n as { id: number })} style={{ width: 32, height: 16 }} />;
+};
 
 // 360x240 logical at 2x raster: a 22px header, seven 22px rows, a 42px footer.
 const ROWS = 7;
@@ -156,7 +175,8 @@ mount(() => {
             }
           >
             <Text class="text-xs text-[#58c8e8]">{entry.index === cursor() ? ">" : " "}</Text>
-            <Text class="text-xs text-[#d8e8ff]">{clip(entry.row.title, 26)}</Text>
+            <Cover id={entry.row.id} />
+            <Text class="text-xs text-[#d8e8ff]">{clip(entry.row.title, 20)}</Text>
             <Text class="text-xs text-[#5a6b7a]">
               {entry.row.progress > 0 ? `${Math.round(entry.row.progress * 100)}%` : clock(entry.row.duration)}
             </Text>

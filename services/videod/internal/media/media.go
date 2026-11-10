@@ -155,6 +155,7 @@ func RegisterRoutes(mux *http.ServeMux, s *Service) {
 	mux.HandleFunc("POST /api/library/{video_id}/watched", s.markLibraryWatched)
 	mux.HandleFunc("DELETE /api/library/{video_id}", s.deleteLibraryVideo)
 	mux.HandleFunc("GET /api/media/{video_id}", s.mediaStream)
+	mux.HandleFunc("GET /api/thumb/{video_id}", s.thumb)
 	mux.HandleFunc("/api/history", s.history)
 	mux.HandleFunc("/api/history/", s.history)
 	mux.HandleFunc("GET /api/storage", s.storage)

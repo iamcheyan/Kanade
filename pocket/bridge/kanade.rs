@@ -49,6 +49,8 @@ fn endpoint(verb: &str, arg: &str) -> Option<(&'static str, String, Option<Strin
         "storage" => Some(("GET", "/api/storage".into(), None)),
         "sync" => Some(("POST", "/api/sync".into(), None)),
         "clear" => Some(("POST", "/api/storage/clear?scope=orphans".into(), None)),
+        // Raw RGBA at the row's cover size; kanade-ctl base64s octet-stream bodies.
+        "thumb" if safe_id(arg) => Some(("GET", format!("/api/thumb/{}?w=32&h=16", arg), None)),
         "play" if safe_id(arg) => Some(("POST", "/api/player/play".into(), body_for(arg))),
         "watched" if safe_id(arg) => Some(("POST", format!("/api/library/{}/watched", arg), body_for(arg))),
         "later" if safe_id(arg) => Some(("POST", format!("/api/watch_later/{}", arg), body_for(arg))),
