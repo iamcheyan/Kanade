@@ -170,14 +170,14 @@ mount(() => {
           <View
             class={
               entry.index === cursor()
-                ? "w-[344px] h-[22px] flex-row items-center justify-between bg-[#1e3042] px-2"
-                : "w-[344px] h-[22px] flex-row items-center justify-between bg-[#0c131a] px-2"
+                ? "w-[344px] h-[22px] flex-row items-center bg-[#1e3042] px-2"
+                : "w-[344px] h-[22px] flex-row items-center bg-[#0c131a] px-2"
             }
           >
-            <Text class="text-xs text-[#58c8e8]">{entry.index === cursor() ? ">" : " "}</Text>
+            <Text class="w-[10px] text-xs text-[#58c8e8]">{entry.index === cursor() ? ">" : " "}</Text>
             <Cover id={entry.row.id} />
-            <Text class="text-xs text-[#d8e8ff]">{clip(entry.row.title, 20)}</Text>
-            <Text class="text-xs text-[#5a6b7a]">
+            <Text class="w-[240px] text-xs text-[#d8e8ff]">{clip(entry.row.title, 20)}</Text>
+            <Text class="w-[46px] text-xs text-[#5a6b7a]">
               {entry.row.progress > 0 ? `${Math.round(entry.row.progress * 100)}%` : clock(entry.row.duration)}
             </Text>
           </View>
