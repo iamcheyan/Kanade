@@ -14,6 +14,9 @@ xdotool and captures frames into this directory.
 
 ## What the frames show
 
+Frames are captured from the panel window itself (360x240), not the screen, and
+each `*-2x.png` is the same pixels at device density for reading text.
+
 - `01-library.png` — LIBRARY tab, 12 items, `1/12`, titles in Japanese and
   Chinese. That the CJK titles are glyphs and not boxes is the point: the baked
   character set is the only glyph source on this profile.
@@ -38,6 +41,10 @@ xdotool and captures frames into this directory.
   run silently tests the wrong service.
 - winit ignores synthetic `XSendEvent` keys: the window needs real input focus
   (`xdotool windowfocus`) and the keys go to the display, not the window.
+- Xvfb's root is 720x480 while the linux-app host draws the 360x240 logical
+  viewport 1:1, so a root grab is a small panel in a large black field. Capture
+  the window id; the `-2x` copies are nearest-neighbour upscales, not renders at
+  device density.
 - Wayland wins over `DISPLAY` when `WAYLAND_DISPLAY` is set, which draws on the
   real desktop and leaves the Xvfb root black; the host is started with
   `env -u WAYLAND_DISPLAY`.

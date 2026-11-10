@@ -90,8 +90,17 @@ env -u WAYLAND_DISPLAY DISPLAY="$DISPLAY_NUM" \
   nohup "$HOST_BIN" --app kanade --js kanade.js --pak kanade.pak --viewport 360x240 --density 1 --title Kanade --fixed >/tmp/kanade-host.log 2>&1 &
 sleep 6
 
-shot() { DISPLAY="$DISPLAY_NUM" import -window root "$OUTDIR/$1" 2>/dev/null \
-         || DISPLAY="$DISPLAY_NUM" scrot "$OUTDIR/$1"; echo "shot: $OUTDIR/$1"; }
+# Capture the panel window, not the screen: Xvfb's root is 720x480 while the
+# linux-app host draws the 360x240 logical viewport 1:1, so a root grab is a
+# small panel in a large black field that reads as a scaling bug. The -2x file
+# is the same pixels at device density (360x240 -> 720x480), nearest neighbour,
+# for reading text; it is an upscale, not a re-render.
+shot() {
+  DISPLAY="$DISPLAY_NUM" import -window "$WID" "$OUTDIR/$1" 2>/dev/null \
+    || DISPLAY="$DISPLAY_NUM" scrot -u "$OUTDIR/$1"
+  convert "$OUTDIR/$1" -filter point -resize 200% "$OUTDIR/${1%.png}-2x.png" 2>/dev/null || true
+  echo "shot: $OUTDIR/$1 ($(identify -format '%wx%h' "$OUTDIR/$1" 2>/dev/null))"
+}
 # The host maps the panel 1:1 into a window; the root capture is the panel.
 # No window manager runs under Xvfb, so focus is never assigned: address the
 # window by id or every key lands on the root and nothing moves.
