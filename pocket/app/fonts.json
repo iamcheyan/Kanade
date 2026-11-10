@@ -3,8 +3,8 @@
     "kanade-characters.txt"
   ],
   "fallback": [
-    "fonts/FusionPixel-12px-monospaced-zh_hans.ttf",
-    "fonts/fusion-pixel-12px-monospaced-ja.ttf",
+    "fonts/SarasaUiSC-Regular.ttf",
+    "fonts/SarasaUiSC-Bold.ttf",
     "fonts/SymbolsNerdFontMono-Regular.ttf"
   ]
 }

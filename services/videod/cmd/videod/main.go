@@ -20,7 +20,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -39,14 +41,15 @@ func main() {
 	addr := flag.String("addr", envOr("KANADE_ADDR", "127.0.0.1:8732"), "listen address")
 	dataDir := flag.String("data", envOr("KANADE_DATA", "/storage/.config/kanade"), "data directory")
 	seed := flag.Bool("seed", false, "insert the demo account and sample rows")
+	seedLibrary := flag.Bool("seed-library", false, "also create sample media files with completed library rows")
 	flag.Parse()
 
-	if err := run(*addr, *dataDir, *seed); err != nil {
+	if err := run(*addr, *dataDir, *seed, *seedLibrary); err != nil {
 		log.Fatalf("videod: %v", err)
 	}
 }
 
-func run(addr, dataDir string, seed bool) error {
+func run(addr, dataDir string, seed, seedLibrary bool) error {
 	downloads := envOr("KANADE_DOWNLOADS", "/storage/content/downloads")
 	ipc := envOr("KANADE_IPC", filepath.Join(dataDir, "ipc"))
 	cookies := filepath.Join(dataDir, "cookies")
@@ -65,6 +68,11 @@ func run(addr, dataDir string, seed bool) error {
 	ctx := context.Background()
 	if seed {
 		if err := store.Seed(ctx, db); err != nil {
+			return err
+		}
+	}
+	if seedLibrary {
+		if err := seedDemoLibrary(ctx, db, downloads); err != nil {
 			return err
 		}
 	}
@@ -153,6 +161,60 @@ func logRequests(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// seedDemoLibrary makes the emulator run show a real library: small files on
+// disk plus completed download rows that point at them. The panel reads the
+// same two things it reads on a device — the completed rows and the directory
+// walk — so a screenshot taken here is the layout, not a fixture.
+func seedDemoLibrary(ctx context.Context, db *sql.DB, downloadDir string) error {
+	if err := os.MkdirAll(downloadDir, 0o750); err != nil {
+		return err
+	}
+	// videos.channel_id is a foreign key, so borrow whatever store.Seed made.
+	var channelID string
+	if err := db.QueryRowContext(ctx, `SELECT id FROM channels LIMIT 1`).Scan(&channelID); err != nil {
+		return fmt.Errorf("seed-library needs seeded channels: %w", err)
+	}
+	titles := []string{
+		"【実機テスト】GBA 音声が出ない件を追う",
+		"用 PocketJS 重写的新面板 v0.1",
+		"NAS へ落とした動画を一覧する",
+		"字幕とチャプターの扱い",
+		"キーボード操作だけで完結させる",
+		"バッテリー残量の表示",
+		"存储占用与清理策略",
+		"离线库的同步时机",
+		"小屏 360x240 的排版",
+		"下载队列与重试",
+		"缩略图缓存",
+		"最后的缓存目录",
+	}
+	for i := 1; i <= 12; i++ {
+		id := fmt.Sprintf("lib-%04d", i)
+		path := filepath.Join(downloadDir, id+".mp4")
+		if _, err := os.Stat(path); err != nil {
+			// 4 KiB of filler: enough for the storage walk to report bytes.
+			if err := os.WriteFile(path, make([]byte, 4096+i*128), 0o640); err != nil {
+				return err
+			}
+		}
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO videos(id,account_id,channel_id,title,url,duration,published_at)
+			 VALUES(?, 'demo', ?, ?, 'https://example.test/watch/'||?, ?, '2026-11-01T00:00:00Z')
+			 ON CONFLICT DO NOTHING`,
+			id, channelID, titles[i-1], id, 90+i*7); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO downloads(account_id,video_id,url,mode,quality,audio_bitrate,priority,state,progress,output_path)
+			 VALUES('demo',?,'https://example.test/watch/'||?,'video','720p','192',?, 'completed',100,?)
+			 ON CONFLICT DO NOTHING`,
+			id, id, 100-i, path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

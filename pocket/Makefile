@@ -25,7 +25,7 @@ build: fonts
 
 fonts:
 	@mkdir -p app/fonts
-	@for f in FusionPixel-12px-monospaced-zh_hans.ttf fusion-pixel-12px-monospaced-ja.ttf SymbolsNerdFontMono-Regular.ttf; do \
+	@for f in SarasaUiSC-Regular.ttf SarasaUiSC-Bold.ttf SymbolsNerdFontMono-Regular.ttf; do \
 	  [ -f "app/fonts/$$f" ] || cp "$(FONT_SRC)/$$f" "app/fonts/$$f" || { echo "missing font $$f (set FONT_SRC=)"; exit 1; }; \
 	done
 
