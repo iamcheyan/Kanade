@@ -6,6 +6,7 @@ import { BTN, onTextEvent } from "@pocketjs/framework/input";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 
 import { coverHandle } from "./covers";
+import { SettingsView, settingsInput, settingsKeyboardOpen } from "./settings-view";
 import { call } from "./host";
 import { TABS, clip, clock, parseVideos, serviceUp, storageSummary, type VideoRow } from "./kanade-model";
 
@@ -40,6 +41,10 @@ mount(() => {
   // Cached: a bridge call is a synchronous host round-trip on the render thread
   // and must never run from a per-repaint accessor.
   const [storage, setStorage] = createSignal("--");
+  // The NAS page is a mode, not a tab: it has its own pad handling and its own
+  // fields, and the list must stop reacting while it is up.
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [settingsValues, setSettingsValues] = createSignal<Record<string, string>>({});
 
   let previousButtons = 0;
   let frames = 0;
@@ -48,6 +53,14 @@ mount(() => {
   const flash = (message: string) => {
     setNote(message);
     setNoteFrames(90);
+  };
+
+  const readSettings = () => {
+    try {
+      setSettingsValues(JSON.parse(call("settings")) as Record<string, string>);
+    } catch {
+      setSettingsValues({});
+    }
   };
 
   const load = () => {
@@ -148,6 +161,19 @@ mount(() => {
       return;
     }
 
+    // The settings page has no frame loop of its own (a second registration is
+    // not delivered), so the list routes the pad into it while it is up.
+    if (settingsOpen()) {
+      // The OSK is modal and owns the pad while it is up; raw onFrame reads are
+      // not blocked for us, so skip them or every key is typed twice.
+      if (settingsKeyboardOpen()) return;
+      if (pressed & BTN.UP) settingsInput("up");
+      if (pressed & BTN.DOWN) settingsInput("down");
+      if (pressed & BTN.CROSS) settingsInput("activate");
+      if (pressed & BTN.START) settingsInput("keys");
+      if (pressed & BTN.CIRCLE) settingsInput("back");
+      return;
+    }
     if (pressed & BTN.DOWN) setCursor((c) => Math.min(Math.max(0, rows().length - 1), c + 1));
     if (pressed & BTN.UP) setCursor((c) => Math.max(0, c - 1));
     if (pressed & BTN.RIGHT) switchTab(tab() + 1);
@@ -157,6 +183,10 @@ mount(() => {
     if (pressed & BTN.TRIANGLE) addLater();
     if (pressed & BTN.START) markWatched();
     if (pressed & BTN.RTRIGGER) syncNow();
+    if (pressed & BTN.SELECT) {
+      readSettings();
+      setSettingsOpen(true);
+    }
     if (pressed & BTN.CROSS) { setCursor(0); load(); }
 
     if (frames % POLL_FRAMES === 0) load();
@@ -171,8 +201,19 @@ mount(() => {
 
   const counter = () => (rows().length === 0 ? "0/0" : `${cursor() + 1}/${rows().length}`);
 
+  // A conditional in the component body runs once: this renderer mounts the
+  // view a single time, so the page switch has to be a memo inside the tree.
   return (
-    <View class="w-[360px] h-[240px] bg-[#0c131a] flex-col">
+    <View class="w-[360px] h-[240px] bg-[#0c131a]">
+      {settingsOpen() ? (
+        <SettingsView
+          values={settingsValues}
+          active={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onRefresh={readSettings}
+        />
+      ) : (
+      <View class="w-[360px] h-[240px] bg-[#0c131a] flex-col">
       <View class="w-[360px] h-[22px] px-2 flex-row items-center justify-between bg-[#101c26]">
         <Text class="text-xs font-bold text-[#58c8e8]">KANADE</Text>
         <Text class="text-xs font-bold text-[#d8e8ff]">{TABS[tab()].label}</Text>
@@ -212,9 +253,11 @@ mount(() => {
         </View>
         <View class="w-[344px] h-[20px] flex-row items-center justify-between">
           <Text class="text-xs text-[#7d8fa0]">{noteFrames() > 0 ? note() : storage()}</Text>
-          <Text class="text-xs text-[#3f5060]">R1 sync  B reload</Text>
+          <Text class="text-xs text-[#3f5060]">R1 sync  L1 NAS  B reload</Text>
         </View>
       </View>
+      </View>
+      )}
     </View>
   );
 });

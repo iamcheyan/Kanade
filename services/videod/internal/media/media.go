@@ -20,6 +20,8 @@ import (
 
 type Config struct {
 	YtDlpPath, MpvPath, DownloadDir, IPCDir string
+	// DataDir holds the share password file and the database directory.
+	DataDir string
 	Concurrency                             int
 	Headless                                bool
 }
@@ -33,6 +35,10 @@ type Service struct {
 	players        map[string]*player
 	paused, closed bool
 	nextRequestID  uint64
+	// puller tracks the background NAS transfer; pullBatch is how many files
+	// one sync will copy.
+	puller    *puller
+	pullBatch int
 }
 
 type job struct {
@@ -153,6 +159,10 @@ func RegisterRoutes(mux *http.ServeMux, s *Service) {
 	mux.HandleFunc("/api/settings", s.settings)
 	mux.HandleFunc("GET /api/library", s.library)
 	mux.HandleFunc("POST /api/library/scan", s.scanLibrary)
+	mux.HandleFunc("GET /api/share/status", s.nasStatus)
+	mux.HandleFunc("POST /api/share/pull", s.nasPull)
+	mux.HandleFunc("POST /api/share/password", s.nasPassword)
+	mux.HandleFunc("POST /api/share/test", s.nasTest)
 	mux.HandleFunc("POST /api/library/{video_id}/watched", s.markLibraryWatched)
 	mux.HandleFunc("DELETE /api/library/{video_id}", s.deleteLibraryVideo)
 	mux.HandleFunc("GET /api/media/{video_id}", s.mediaStream)

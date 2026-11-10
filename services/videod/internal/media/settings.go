@@ -13,6 +13,10 @@ var settingDefaults = map[string]string{
 	"default_quality": "720p", "storage_limit_gb": "20", "concurrency": "2",
 	"source_youtube": "on", "source_bilibili": "on", "auto_download": "on",
 	"source_sync": "on", "sync_interval_min": "0",
+	// The share the panel pulls from once Wi-Fi is up. The password is not a
+	// setting: it lives in a 0600 file so it never returns in this map.
+	"nas_enabled": "off", "nas_host": "", "nas_share": "", "nas_dir": "", "nas_user": "",
+	"nas_batch": "8",
 }
 
 func (s *Service) settings(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +50,7 @@ func (s *Service) settings(w http.ResponseWriter, r *http.Request) {
 		if m["library_dir"] == "" {
 			m["library_dir"] = s.cfg.DownloadDir
 		}
+		m["nas_password_set"] = map[bool]string{true: "yes", false: "no"}[s.PasswordSet()]
 		writeJSON(w, 200, m)
 		return
 	}
@@ -113,6 +118,33 @@ func (s *Service) settings(w http.ResponseWriter, r *http.Request) {
 		case "download_dir", "library_dir":
 			if strings.Contains(v, "..") {
 				apiError(w, 400, "invalid_setting", "directory must not escape the data directory")
+				return
+			}
+		case "nas_enabled":
+			if !oneOf(v, "on", "off") {
+				apiError(w, 400, "invalid_setting", "nas_enabled must be on or off")
+				return
+			}
+		case "nas_host":
+			v = strings.TrimSpace(v)
+			if strings.ContainsAny(v, " \t/\\") {
+				apiError(w, 400, "invalid_setting", "nas_host must be a host or host:port")
+				return
+			}
+		case "nas_share", "nas_dir":
+			if strings.Contains(v, "..") {
+				apiError(w, 400, "invalid_setting", "nas path must not contain ..")
+				return
+			}
+			v = strings.Trim(strings.ReplaceAll(v, "\\", "/"), "/")
+		case "nas_batch":
+			if n, e := strconv.Atoi(v); e != nil || n < 1 || n > 50 {
+				apiError(w, 400, "invalid_setting", "nas_batch must be 1-50")
+				return
+			}
+		case "nas_user":
+			if len(v) > 128 || strings.ContainsAny(v, "\n\r") {
+				apiError(w, 400, "invalid_setting", "nas_user is not a valid name")
 				return
 			}
 		default:

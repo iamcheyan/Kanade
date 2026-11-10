@@ -82,6 +82,7 @@ func run(addr, dataDir string, seed, seedLibrary bool) error {
 		MpvPath:     envOr("KANADE_MPV", "mpv"),
 		DownloadDir: downloads,
 		IPCDir:      ipc,
+		DataDir:     dataDir,
 		Concurrency: 2,
 		Headless:    true,
 	}
@@ -121,6 +122,7 @@ func run(addr, dataDir string, seed, seedLibrary bool) error {
 
 	// The media service owns the download directory, so it owns the scan that
 	// makes files already on the card visible to /api/sync.
+	handler.NASPull = svc.StartPull
 	handler.LibraryScan = func(ctx context.Context) (int, int, int, error) {
 		result, err := svc.ScanLibrary(ctx)
 		return result.Added, result.Updated, result.Skipped, err

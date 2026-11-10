@@ -50,6 +50,10 @@ fn endpoint(verb: &str, arg: &str) -> Option<(&'static str, String, Option<Strin
         // {"what":"library"} scans the card and returns at once; the default
         // scope also pulls subscriptions, which needs cookies and a network.
         "sync" => Some(("POST", "/api/sync".into(), Some("{\"what\":\"library\"}".into()))),
+        "settings_put" if !arg.is_empty() => Some(("PUT", "/api/settings".into(), Some(arg.to_string()))),
+        "nas_status" => Some(("GET", "/api/share/status".into(), None)),
+        "nas_test" => Some(("POST", "/api/share/test".into(), Some("{}".into()))),
+        "nas_pull" => Some(("POST", "/api/share/pull".into(), Some("{}".into()))),
         "clear" => Some(("POST", "/api/storage/clear?scope=orphans".into(), None)),
         // Raw RGBA at the row's cover size; kanade-ctl base64s octet-stream bodies.
         "thumb" if safe_id(arg) => Some(("GET", format!("/api/thumb/{}?w=32&h=16", arg), None)),
@@ -61,6 +65,21 @@ fn endpoint(verb: &str, arg: &str) -> Option<(&'static str, String, Option<Strin
     }
 }
 
+
+/// The share password crosses the bridge hex-encoded. argv is readable by every
+/// process on the box, and a passphrase sitting in plain sight in `ps` is a
+/// worse habit than the encoding cost.
+fn from_hex(value: &str) -> Option<String> {
+    if value.len() % 2 != 0 || value.len() > 1024 {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..value.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&value[i..i + 2], 16).ok())
+        .collect();
+    String::from_utf8(bytes?).ok()
+}
+
 pub fn command(value: &str) -> String {
     let fields: Vec<&str> = value.split('\t').collect();
     let (verb, arg) = match fields.as_slice() {
@@ -68,7 +87,24 @@ pub fn command(value: &str) -> String {
         ["KANADE", verb, arg] => (*verb, *arg),
         _ => return String::new(),
     };
-    let Some((method, path, body)) = endpoint(verb, arg) else {
+    // The password is the one verb that cannot go through the table above: it
+    // carries its own hex-decoded JSON body.
+    let resolved = if verb == "nas_password" {
+        match from_hex(arg) {
+            Some(password) => {
+                let escaped = password.replace('\\', "\\\\").replace('"', "\\\"");
+                Some((
+                    "POST",
+                    "/api/share/password".to_string(),
+                    Some(format!("{{\"password\":\"{}\"}}", escaped)),
+                ))
+            }
+            None => None,
+        }
+    } else {
+        endpoint(verb, arg)
+    };
+    let Some((method, path, body)) = resolved else {
         return "error:bad-verb".into();
     };
     let Some(ctl) = ctl_path() else {

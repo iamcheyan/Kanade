@@ -22,6 +22,11 @@ each `*-2x.png` is the same pixels at device density for reading text.
   character set is the only glyph source on this profile.
 - `02-cursor.png`, `03-watch-later.png`, `04-history.png`, `05-back-to-library.png`
   — d-pad and tab navigation.
+- `07-nas.png`, `08-nas-cursor.png`, `09-nas-keyboard.png` — the NAS page
+  (A edit, START keys, B back), the cursor on HOST, and the on-screen keyboard
+  the framework docks at the bottom. The keyboard frame was captured from the
+  same build by driving it directly: a scripted tap occasionally falls between
+  pad samples and the harness cannot tell that apart from a broken binding.
 - `06-sync.png` — after R1. The panel issued `KANADE<TAB>sync`, the bridge ran
   `kanade-ctl POST /api/sync`, and the service logged it:
 

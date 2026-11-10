@@ -72,8 +72,13 @@ echo "== 5/6 build the host binary"
 # A running host holds the artifact open, and the build then fails with
 # ETXTBSY while copying it into place. comm is truncated to "pocket-desktop-",
 # so match the cmdline instead of using pkill -x.
-for pid in $(ps -eo pid,args | awk '/program\/pocket-desktop-host/ {print $1}'); do
-  kill -9 "$pid" 2>/dev/null || true
+# Match the resolved executable too: a host started with ./pocket-desktop-host
+# carries a relative argv and slips past an argv-only pattern.
+for pid in $(ps -eo pid,args | awk '/pocket-desktop-host/ {print $1}'); do
+  [ "$pid" = "$$" ] && continue
+  case "$(readlink -f "/proc/$pid/exe" 2>/dev/null)" in
+    */pocket-desktop-host) kill -9 "$pid" 2>/dev/null || true ;;
+  esac
 done
 sleep 1
 (cd "$SDK" && export PATH="$HOME/.bun/bin:$PATH" && \
@@ -120,7 +125,7 @@ WID=$(DISPLAY="$DISPLAY_NUM" xdotool search --name "Kanade" | head -1)
 # winit drops synthetic XSendEvent keys, so give the window real input focus
 # (XSetInputFocus) and type at the display instead of at the window.
 DISPLAY="$DISPLAY_NUM" xdotool windowfocus --sync "$WID" 2>/dev/null || true
-key() { DISPLAY="$DISPLAY_NUM" xdotool key --clearmodifiers "$1"; sleep 1; }
+key() { DISPLAY="$DISPLAY_NUM" xdotool key --clearmodifiers "$1"; sleep 0.6; }
 
 shot 01-library.png
 key Down; key Down; shot 02-cursor.png
@@ -145,6 +150,19 @@ for attempt in 1 2 3 4 5 6; do
   sleep 1
 done
 shot 06-sync.png
+
+# The NAS page: L1 opens it, d-pad moves, A opens the on-screen keyboard.
+# A one-frame tap can fall between pad samples, so retry until the service sees
+# the settings read that opening the page performs.
+for attempt in 1 2 3 4 5 6; do
+  key Tab
+  grep -q "GET /api/settings" /tmp/videod-emu.log && break
+  sleep 1
+done
+sleep 1; shot 07-nas.png
+key Down; key Down; key Down; key Down; sleep 1; shot 08-nas-cursor.png
+key z; sleep 2; shot 09-nas-keyboard.png
+key x; sleep 1; key x; sleep 1; shot 10-back-to-list.png
 printf 'sync requests seen: %s\n' "$(grep -c '/api/sync' /tmp/videod-emu.log)"
 
 echo "captured into $OUTDIR"

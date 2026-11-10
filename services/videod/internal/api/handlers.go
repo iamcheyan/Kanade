@@ -26,6 +26,9 @@ type Handler struct {
 	// LibraryScan registers media already on the card. Set by main; nil when
 	// the service runs without a media directory (tests, tooling).
 	LibraryScan func(context.Context) (added int, updated int, skipped int, err error)
+	// NASPull starts a background transfer from the configured share. It
+	// returns whether one started, and why not when it did not.
+	NASPull func(context.Context) (bool, string)
 	// DataDir is where provider cookie jars live. Set by main so the cookie
 	// import endpoint writes the same file the provider reads.
 	DataDir string
@@ -580,6 +583,14 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 			result["local_updated"] = updated
 			result["local_known"] = skipped
 		}
+	}
+	// The share is the source of the library, so a sync also asks for the
+	// newest files. The transfer is far too slow for this request, so it is
+	// started and reported later by /api/share/status.
+	if h.NASPull != nil && (in.What == "all" || in.What == "library") {
+		started, reason := h.NASPull(r.Context())
+		result["nas_pull"] = started
+		result["nas_reason"] = reason
 	}
 	if in.What == "library" {
 		result["provider_sync"] = "skipped"
