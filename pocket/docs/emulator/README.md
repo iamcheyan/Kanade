@@ -57,9 +57,9 @@ Audio, the panel's own GPU path and the pad driver are device-only. The
 transfer of the package to the card and its admission are exercised by
 `pocket/scripts/deploy.sh` on the device.
 
-## Captures are not committed
+## Captures
 
-The run now serves the real library, so a frame contains video titles and cover
-art from a personal watch history. The frames stay local (the script writes
-them into this directory) and are deliberately not committed; the notes here
-describe what to expect from them instead.
+The run serves the real library, so the frames contain real titles and cover
+art. They are committed on purpose: the layout questions this directory answers
+(sixteen-aligned textures, a column that lines up, real CJK at 2x) are only
+visible on real content, and synthetic rows hid three separate bugs.
