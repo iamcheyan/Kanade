@@ -1,1 +1,10 @@
 # Build output; the device binary is produced by `make videod`.
+#
+# Anchored to this directory on purpose: a bare "videod" pattern also matched
+# cmd/videod/ and silently kept the service entry point out of version control,
+# which is why the Makefile referenced a path no clone ever contained.
+/videod
+/videod-arm64
+
+# Runtime state when `make run` is used with a scratch data dir.
+/data/
