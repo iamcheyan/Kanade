@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,7 +64,19 @@ func (s *Service) library(w http.ResponseWriter, r *http.Request) {
 			  AND d2.state='completed' AND d2.output_path<>''
 			ORDER BY (d2.mode='video') DESC, d2.id LIMIT 1)`
 	}
-	rows, err := s.db.QueryContext(r.Context(), base+" ORDER BY "+order, args...)
+	// `limit` was documented but never read, so `?limit=5` returned the whole
+	// library. Cap it, and cap the cap: the panel asks for 100 and a caller
+	// cannot pull an unbounded result set out of a service on loopback.
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value > 0 {
+			limit = value
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(r.Context(), base+" ORDER BY "+order+" LIMIT "+strconv.Itoa(limit), args...)
 	if err != nil {
 		apiError(w, 500, "database_error", "unable to read offline library")
 		return
