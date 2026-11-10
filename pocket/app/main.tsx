@@ -1,0 +1,186 @@
+import { createSignal, onMount } from "solid-js";
+import { mount } from "@pocketjs/framework/solid";
+import { Text, View } from "@pocketjs/framework/solid/components";
+import { BTN, onTextEvent } from "@pocketjs/framework/input";
+import { onFrame } from "@pocketjs/framework/lifecycle";
+
+import { call } from "./host";
+import { TABS, clip, clock, parseVideos, serviceUp, storageSummary, type VideoRow } from "./kanade-model";
+
+// 360x240 logical at 2x raster: a 22px header, seven 22px rows, a 42px footer.
+const ROWS = 7;
+const POLL_FRAMES = 120;
+
+mount(() => {
+  const [tab, setTab] = createSignal(0);
+  const [rows, setRows] = createSignal<VideoRow[]>([]);
+  const [cursor, setCursor] = createSignal(0);
+  const [online, setOnline] = createSignal(false);
+  const [note, setNote] = createSignal("starting…");
+  const [noteFrames, setNoteFrames] = createSignal(0);
+  // Cached: a bridge call is a synchronous host round-trip on the render thread
+  // and must never run from a per-repaint accessor.
+  const [storage, setStorage] = createSignal("--");
+
+  let previousButtons = 0;
+  let frames = 0;
+  let armed = false;
+
+  const flash = (message: string) => {
+    setNote(message);
+    setNoteFrames(90);
+  };
+
+  const load = () => {
+    const health = call("status");
+    const up = serviceUp(health);
+    setOnline(up);
+    if (!up) {
+      setRows([]);
+      setStorage("--");
+      flash("videod offline");
+      return;
+    }
+    const items = parseVideos(call(TABS[tab()].verb));
+    setRows(items);
+    setCursor((current) => Math.max(0, Math.min(Math.max(0, items.length - 1), current)));
+    setStorage(storageSummary(call("storage")));
+    flash(`${items.length} item(s)`);
+  };
+
+  const selected = (): VideoRow | undefined => rows()[cursor()];
+
+  const play = () => {
+    const item = selected();
+    if (!item) return;
+    const answer = call("play", item.id || "");
+    flash(answer.startsWith("error:") ? `play failed (${answer.slice(6)})` : `playing ${clip(item.title, 16)}`);
+  };
+
+  const toggleFavorite = () => {
+    const item = selected();
+    if (!item) return;
+    flash(call("favorite", item.id).startsWith("error:") ? "favorite failed" : "favorite toggled");
+  };
+
+  const addLater = () => {
+    const item = selected();
+    if (!item) return;
+    flash(call("later", item.id).startsWith("error:") ? "watch later failed" : "added to watch later");
+  };
+
+  const markWatched = () => {
+    const item = selected();
+    if (!item) return;
+    flash(call("watched", item.id).startsWith("error:") ? "mark failed" : "marked watched");
+    load();
+  };
+
+  const switchTab = (next: number) => {
+    setTab((next + TABS.length) % TABS.length);
+    setCursor(0);
+    load();
+  };
+
+  const syncNow = () => {
+    flash("syncing…");
+    const answer = call("sync");
+    flash(answer.startsWith("error:") ? "sync unavailable" : "sync requested");
+    load();
+  };
+
+  onMount(load);
+
+  // Keyboard path for the desktop harness and a USB keyboard on the device.
+  onTextEvent((event) => {
+    if (event.kind !== "key" || !event.pressed) return;
+    if (event.key === "ArrowUp") setCursor((c) => Math.max(0, c - 1));
+    else if (event.key === "ArrowDown") setCursor((c) => Math.min(Math.max(0, rows().length - 1), c + 1));
+    else if (event.key === "ArrowLeft") switchTab(tab() - 1);
+    else if (event.key === "ArrowRight") switchTab(tab() + 1);
+    else if (event.key === "Enter" || event.key === " ") play();
+  });
+
+  onFrame((buttons: number) => {
+    frames += 1;
+    const pressed = buttons & ~previousButtons;
+    previousButtons = buttons;
+
+    if (noteFrames() > 0) setNoteFrames((n) => n - 1);
+
+    // Arm on a frame counter: this pad never reports an all-clear snapshot, so
+    // gating on `buttons === 0` would leave the app permanently deaf.
+    if (!armed) {
+      if (frames > 3) armed = true;
+      return;
+    }
+
+    if (pressed & BTN.DOWN) setCursor((c) => Math.min(Math.max(0, rows().length - 1), c + 1));
+    if (pressed & BTN.UP) setCursor((c) => Math.max(0, c - 1));
+    if (pressed & BTN.RIGHT) switchTab(tab() + 1);
+    if (pressed & BTN.LEFT) switchTab(tab() - 1);
+    if (pressed & BTN.CIRCLE) play();
+    if (pressed & BTN.SQUARE) toggleFavorite();
+    if (pressed & BTN.TRIANGLE) addLater();
+    if (pressed & BTN.START) markWatched();
+    if (pressed & BTN.RTRIGGER) syncNow();
+    if (pressed & BTN.CROSS) { setCursor(0); load(); }
+
+    if (frames % POLL_FRAMES === 0) load();
+  });
+
+  const windowed = () => {
+    const total = rows().length;
+    if (total <= ROWS) return rows().map((row, index) => ({ row, index }));
+    const start = Math.max(0, Math.min(total - ROWS, cursor() - Math.floor(ROWS / 2)));
+    return rows().slice(start, start + ROWS).map((row, i) => ({ row, index: start + i }));
+  };
+
+  const counter = () => (rows().length === 0 ? "0/0" : `${cursor() + 1}/${rows().length}`);
+
+  return (
+    <View class="w-[360px] h-[240px] bg-[#0c131a] flex-col">
+      <View class="w-[360px] h-[22px] px-2 flex-row items-center justify-between bg-[#101c26]">
+        <Text class="text-xs font-bold text-[#58c8e8]">KANADE</Text>
+        <Text class="text-xs font-bold text-[#d8e8ff]">{TABS[tab()].label}</Text>
+        <Text class="text-xs font-bold text-[#7d8fa0]">{online() ? "ONLINE" : "OFFLINE"}</Text>
+      </View>
+
+      <View class="w-[360px] h-[176px] px-2 pt-1 flex-col">
+        {windowed().map((entry) => (
+          <View
+            class={
+              entry.index === cursor()
+                ? "w-[344px] h-[22px] flex-row items-center justify-between bg-[#1e3042] px-2"
+                : "w-[344px] h-[22px] flex-row items-center justify-between bg-[#0c131a] px-2"
+            }
+          >
+            <Text class="text-xs text-[#58c8e8]">{entry.index === cursor() ? ">" : " "}</Text>
+            <Text class="text-xs text-[#d8e8ff]">{clip(entry.row.title, 26)}</Text>
+            <Text class="text-xs text-[#5a6b7a]">
+              {entry.row.progress > 0 ? `${Math.round(entry.row.progress * 100)}%` : clock(entry.row.duration)}
+            </Text>
+          </View>
+        ))}
+        {rows().length === 0 ? (
+          <View class="w-[344px] h-[22px] px-2 flex-row items-center">
+            <Text class="text-xs text-[#5a6b7a]">
+              {online() ? "no items — press R1 to sync" : "videod is not running"}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View class="w-[360px] h-[42px] px-2 flex-col bg-[#101c26]">
+        <View class="w-[344px] h-[20px] flex-row items-center justify-between">
+          <Text class="text-xs text-[#5a6b7a]">A play  X fav  Y later</Text>
+          <Text class="text-xs text-[#58c8e8]">{counter()}</Text>
+        </View>
+        <View class="w-[344px] h-[20px] flex-row items-center justify-between">
+          <Text class="text-xs text-[#7d8fa0]">{noteFrames() > 0 ? note() : storage()}</Text>
+          <Text class="text-xs text-[#3f5060]">R1 sync  B reload</Text>
+        </View>
+      </View>
+    </View>
+  );
+});

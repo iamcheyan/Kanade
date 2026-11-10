@@ -1,0 +1,30 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "org.pjos.kanade",
+  "name": "kanade",
+  "title": "Kanade",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": [
+        "text.glyphs.baked",
+        "input.buttons"
+      ]
+    }
+  },
+  "app": {
+    "entry": "main.tsx",
+    "output": "kanade",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [
+          360,
+          240
+        ],
+        "presentation": "integer-fit"
+      }
+    }
+  }
+}
