@@ -152,6 +152,7 @@ func RegisterRoutes(mux *http.ServeMux, s *Service) {
 	mux.HandleFunc("GET /api/player/state", s.playerState)
 	mux.HandleFunc("/api/settings", s.settings)
 	mux.HandleFunc("GET /api/library", s.library)
+	mux.HandleFunc("POST /api/library/scan", s.scanLibrary)
 	mux.HandleFunc("POST /api/library/{video_id}/watched", s.markLibraryWatched)
 	mux.HandleFunc("DELETE /api/library/{video_id}", s.deleteLibraryVideo)
 	mux.HandleFunc("GET /api/media/{video_id}", s.mediaStream)
@@ -447,4 +448,14 @@ func oneOf(v string, choices ...string) bool {
 		}
 	}
 	return false
+}
+
+// scanLibrary registers media already on the card; see ingest.go.
+func (s *Service) scanLibrary(w http.ResponseWriter, r *http.Request) {
+	result, err := s.ScanLibrary(r.Context())
+	if err != nil {
+		apiError(w, 500, "scan_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

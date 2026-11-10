@@ -130,6 +130,10 @@ key Left; key Left; key Left; shot 05-back-to-library.png
 
 # File sync: R triggers KANADE sync -> videod POST /api/sync. The service logs
 # the request, which is what proves the bridge reached it from the panel.
+# A file that appears after the service started is what the sync step is for;
+# KANADE_SYNC_DROP names one to copy in just before R is pressed.
+[ -n "${KANADE_SYNC_DROP:-}" ] && cp "$KANADE_SYNC_DROP" "$LIVE_MEDIA/" 2>/dev/null || true
+
 # The guest arms its pad handler after a few frames, and a key sent before that
 # is dropped, so retry until the service actually logs the request instead of
 # asserting on one press.

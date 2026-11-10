@@ -47,7 +47,9 @@ fn endpoint(verb: &str, arg: &str) -> Option<(&'static str, String, Option<Strin
         "downloads" => Some(("GET", "/api/downloads?limit=100".into(), None)),
         "settings" => Some(("GET", "/api/settings".into(), None)),
         "storage" => Some(("GET", "/api/storage".into(), None)),
-        "sync" => Some(("POST", "/api/sync".into(), None)),
+        // {"what":"library"} scans the card and returns at once; the default
+        // scope also pulls subscriptions, which needs cookies and a network.
+        "sync" => Some(("POST", "/api/sync".into(), Some("{\"what\":\"library\"}".into()))),
         "clear" => Some(("POST", "/api/storage/clear?scope=orphans".into(), None)),
         // Raw RGBA at the row's cover size; kanade-ctl base64s octet-stream bodies.
         "thumb" if safe_id(arg) => Some(("GET", format!("/api/thumb/{}?w=32&h=16", arg), None)),

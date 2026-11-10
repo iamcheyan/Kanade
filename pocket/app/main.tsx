@@ -101,11 +101,25 @@ mount(() => {
     load();
   };
 
+  // R1 asks the service to scan the card. The reply carries how many files were
+  // new, so the panel can say what changed instead of "requested" forever.
   const syncNow = () => {
     flash("syncing…");
     const answer = call("sync");
-    flash(answer.startsWith("error:") ? "sync unavailable" : "sync requested");
+    if (!answer || answer.startsWith("error:")) {
+      flash("sync unavailable");
+      return;
+    }
+    let added = -1;
+    try {
+      added = Number(JSON.parse(answer).local_added ?? -1);
+    } catch {
+      added = -1;
+    }
     load();
+    if (added > 0) flash(`+${added} new`);
+    else if (added === 0) flash("no new files");
+    else flash("sync requested");
   };
 
   onMount(load);

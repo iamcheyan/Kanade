@@ -23,6 +23,9 @@ type Handler struct {
 	// SyncSources maps a source name ("youtube", "bilibili") to its provider.
 	// POST /api/sync selects one with {"source": "..."}.
 	SyncSources map[string]SyncProvider
+	// LibraryScan registers media already on the card. Set by main; nil when
+	// the service runs without a media directory (tests, tooling).
+	LibraryScan func(context.Context) (added int, updated int, skipped int, err error)
 	// DataDir is where provider cookie jars live. Set by main so the cookie
 	// import endpoint writes the same file the provider reads.
 	DataDir string
@@ -542,7 +545,7 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 	if in.What == "" {
 		in.What = "all"
 	}
-	if in.What != "all" && in.What != "subscriptions" && in.What != "playlists" && in.What != "watch_later" {
+	if in.What != "all" && in.What != "subscriptions" && in.What != "playlists" && in.What != "watch_later" && in.What != "library" {
 		fail(w, 400, "unsupported sync scope")
 		return
 	}
@@ -564,6 +567,26 @@ func (h *Handler) sync(w http.ResponseWriter, r *http.Request) {
 
 	result := map[string]any{"status": "ok", "account_id": account, "what": in.What, "source": effectiveSource, "synced_at": now}
 	var errs []string
+
+	// The card is the library an offline player actually shows, so a sync always
+	// looks there first: a file that arrived by hand or from the downloader's own
+	// process has no row yet and would otherwise never appear in the list.
+	if h.LibraryScan != nil && (in.What == "all" || in.What == "library") {
+		added, updated, skipped, err := h.LibraryScan(r.Context())
+		if err != nil {
+			errs = append(errs, "library: "+err.Error())
+		} else {
+			result["local_added"] = added
+			result["local_updated"] = updated
+			result["local_known"] = skipped
+		}
+	}
+	if in.What == "library" {
+		result["provider_sync"] = "skipped"
+		result["errors"] = errs
+		jsonOut(w, result)
+		return
+	}
 
 	if provider == nil {
 		result["provider_sync"] = "not_configured"

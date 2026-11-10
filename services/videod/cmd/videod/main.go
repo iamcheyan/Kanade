@@ -119,6 +119,13 @@ func run(addr, dataDir string, seed, seedLibrary bool) error {
 	})
 	handler.Register(mux)
 
+	// The media service owns the download directory, so it owns the scan that
+	// makes files already on the card visible to /api/sync.
+	handler.LibraryScan = func(ctx context.Context) (int, int, int, error) {
+		result, err := svc.ScanLibrary(ctx)
+		return result.Added, result.Updated, result.Skipped, err
+	}
+
 	// Downloads, player, library, settings, storage.
 	media.RegisterRoutes(mux, svc)
 
